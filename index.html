@@ -1370,14 +1370,15 @@
                         <button class="btn" id="export-all-csv" type="button"><i data-lucide="file-spreadsheet"></i><span>导出 CSV</span></button>
                     </div>
                 </div>
-                <div class="panel">
-                    <h3 class="panel-title">同步代码</h3>
-                    <div class="actions" style="justify-content:flex-start">
+                <details class="panel advanced-cloud">
+                    <summary>离线备份码（少用）</summary>
+                    <div class="muted mt12">没有网络或不想登录云同步时再用。正常分享给同学只需要网站链接和同步空间码。</div>
+                    <div class="actions mt12" style="justify-content:flex-start">
                         <button class="btn" id="make-code" type="button"><i data-lucide="copy"></i><span>生成</span></button>
                         <button class="btn primary" id="use-code" type="button"><i data-lucide="refresh-cw"></i><span>恢复</span></button>
                     </div>
-                    <textarea id="sync-code" class="mt12" rows="4" style="font-family:ui-monospace,Consolas,monospace" placeholder="把生成的代码复制到另一台设备，或把已有代码粘贴到这里恢复"></textarea>
-                </div>
+                    <textarea id="sync-code" class="mt12" rows="4" style="font-family:ui-monospace,Consolas,monospace" placeholder="离线迁移才需要：把生成的备份码复制到另一台设备，或把已有备份码粘贴到这里恢复"></textarea>
+                </details>
                 <div class="panel">
                     <h3 class="panel-title">云同步</h3>
                     <div class="field">
