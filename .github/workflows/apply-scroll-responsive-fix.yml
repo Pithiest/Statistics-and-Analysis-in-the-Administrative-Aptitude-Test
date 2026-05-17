@@ -1,0 +1,53 @@
+name: Apply responsive scroll fix
+
+on:
+  push:
+    branches:
+      - "行测的统计与分析"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch scroll and responsive overflow bugs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('index.html')
+          text = path.read_text(encoding='utf-8')
+
+          text = text.replace(
+              '            line-height: 1.5;\n            overflow: hidden;',
+              '            line-height: 1.5;\n            overflow-x: hidden;\n            overflow-y: auto;',
+              1,
+          )
+
+          text = text.replace(
+              '        .sidebar {\n            min-height: 100vh;\n            background: var(--nav);\n            color: var(--nav-ink);\n            display: flex;\n            flex-direction: column;\n            position: relative;\n            z-index: 3;\n        }',
+              '        .sidebar {\n            height: 100vh;\n            background: var(--nav);\n            color: var(--nav-ink);\n            display: flex;\n            flex-direction: column;\n            position: sticky;\n            top: 0;\n            overflow-y: auto;\n            z-index: 3;\n        }',
+              1,
+          )
+
+          text = text.replace(
+              '        .reason-grid input {\n            position: absolute;\n            opacity: 0;\n            pointer-events: none;\n        }',
+              '        .reason-grid input {\n            position: absolute;\n            width: 1px;\n            height: 1px;\n            margin: 0;\n            opacity: 0;\n            pointer-events: none;\n        }',
+              1,
+          )
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit update and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/apply-scroll-responsive-fix.yml
+          git add index.html .github/workflows/apply-scroll-responsive-fix.yml
+          git commit -m "Fix desktop scrolling and mobile overflow" || exit 0
+          git push
