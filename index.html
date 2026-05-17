@@ -2560,13 +2560,13 @@
             if (!records.length) return toast("暂无数据可生成");
             const payload = JSON.stringify({ version: 20, settings, records });
             $("#sync-code").value = encodeBase64(payload);
-            toast("同步代码已生成");
+            toast("离线备份码已生成");
         }
 
         function useSyncCode() {
             const text = $("#sync-code").value.trim();
-            if (!text) return toast("请先粘贴同步代码");
-            if (!confirm("确定用同步代码覆盖当前数据吗？")) return;
+            if (!text) return toast("请先粘贴离线备份码");
+            if (!confirm("确定用离线备份码覆盖当前数据吗？")) return;
             try {
                 const data = safeParse(decodeBase64(text));
                 const imported = Array.isArray(data) ? data : data?.records;
@@ -2577,10 +2577,10 @@
                 localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
                 closeModal("backup-modal");
                 renderAll();
-                toast("同步代码已恢复");
+                toast("离线备份码已恢复");
             } catch (error) {
                 console.error(error);
-                toast("同步代码无法识别");
+                toast("离线备份码无法识别");
             }
         }
 
