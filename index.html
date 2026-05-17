@@ -884,6 +884,17 @@
             font-weight: 880;
         }
 
+        .advanced-cloud {
+            margin-top: 12px;
+        }
+
+        .advanced-cloud summary {
+            cursor: pointer;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 850;
+        }
+
         .toast {
             position: fixed;
             right: 20px;
@@ -1369,17 +1380,24 @@
                 </div>
                 <div class="panel">
                     <h3 class="panel-title">云同步</h3>
-                    <div class="form-grid">
-                        <div class="field"><label for="cloud-url">Supabase URL</label><input id="cloud-url" type="url" placeholder="https://xxxx.supabase.co"></div>
-                        <div class="field"><label for="cloud-key">Anon Key</label><input id="cloud-key" type="password" autocomplete="off"></div>
-                        <div class="field"><label for="cloud-space">同步空间码</label><input id="cloud-space" type="password" autocomplete="off" placeholder="自定义一串私密口令"></div>
+                    <div class="field">
+                        <label for="cloud-space">同步空间码</label>
+                        <input id="cloud-space" type="password" autocomplete="off" placeholder="每位同学自己设置一串口令">
                     </div>
                     <div class="actions" style="justify-content:flex-start">
                         <button class="btn" id="save-cloud" type="button"><i data-lucide="save"></i><span>保存配置</span></button>
+                        <button class="btn" id="make-space-code" type="button"><i data-lucide="key-round"></i><span>生成空间码</span></button>
                         <button class="btn" id="cloud-upload" type="button"><i data-lucide="cloud-upload"></i><span>上传</span></button>
                         <button class="btn primary" id="cloud-pull" type="button"><i data-lucide="cloud-download"></i><span>拉取</span></button>
                     </div>
-                    <div class="muted mt12" id="cloud-status">未配置</div>
+                    <div class="muted mt12" id="cloud-status">只需要给同学网站链接和同步空间码。</div>
+                    <details class="advanced-cloud">
+                        <summary>高级配置：Supabase 地址和 Key</summary>
+                        <div class="form-grid mt12">
+                            <div class="field"><label for="cloud-url">Supabase URL</label><input id="cloud-url" type="url" placeholder="https://xxxx.supabase.co"></div>
+                            <div class="field"><label for="cloud-key">Publishable Key</label><input id="cloud-key" type="password" autocomplete="off"></div>
+                        </div>
+                    </details>
                 </div>
                 <div class="panel">
                     <h3 class="panel-title">危险操作</h3>
@@ -1397,6 +1415,11 @@
         const THEME_KEY = "xingce_v20_theme";
         const ACTIVE_VIEW_KEY = "xingce_v20_active_view";
         const CLOUD_KEY = "xingce_v20_cloud";
+        const DEFAULT_CLOUD = {
+            supabaseUrl: "https://atwsraivphybkfmyeubd.supabase.co",
+            anonKey: "sb_publishable_y6wlba5S8qYJebIgnc389Q_zW6pMJnv",
+            spaceCode: ""
+        };
         const LEGACY_KEYS = ["xingce_v19_records", "xingce_v18_db", "xingce_v17_db", "xingce_v16_db", "xingce_final_v15", "xingce_master_v14", "xingce_master_v13"];
 
         const MODULES = {
@@ -1426,7 +1449,7 @@
 
         let records = [];
         let settings = { examDate: "", dailyGoal: 80, targetRate: 80 };
-        let cloud = { supabaseUrl: "", anonKey: "", spaceCode: "" };
+        let cloud = { ...DEFAULT_CLOUD };
         let activeView = "dashboard";
         let dashboardRange = 14;
         let editingId = null;
@@ -1447,7 +1470,7 @@
         function init() {
             records = loadRecords();
             settings = { ...settings, ...(safeParse(localStorage.getItem(SETTINGS_KEY)) || {}) };
-            cloud = { ...cloud, ...(safeParse(localStorage.getItem(CLOUD_KEY)) || {}) };
+            cloud = normalizeCloudConfig({ ...DEFAULT_CLOUD, ...(safeParse(localStorage.getItem(CLOUD_KEY)) || {}) });
             applyTheme(localStorage.getItem(THEME_KEY) || "light");
             buildStaticControls();
             wireEvents();
@@ -1527,6 +1550,7 @@
             $("#make-code").addEventListener("click", makeSyncCode);
             $("#use-code").addEventListener("click", useSyncCode);
             $("#save-cloud").addEventListener("click", saveCloudConfig);
+            $("#make-space-code").addEventListener("click", makeSpaceCode);
             $("#cloud-upload").addEventListener("click", cloudUpload);
             $("#cloud-pull").addEventListener("click", cloudPull);
             $("#clear-data").addEventListener("click", clearData);
@@ -2561,23 +2585,32 @@
         }
 
         function syncCloudUI() {
-            $("#cloud-url").value = cloud.supabaseUrl || "";
-            $("#cloud-key").value = cloud.anonKey || "";
+            cloud = normalizeCloudConfig(cloud);
+            $("#cloud-url").value = cloud.supabaseUrl;
+            $("#cloud-key").value = cloud.anonKey;
             $("#cloud-space").value = cloud.spaceCode || "";
-            $("#cloud-status").textContent = cloud.supabaseUrl && cloud.anonKey && cloud.spaceCode ? "已配置" : "未配置";
+            $("#cloud-status").textContent = cloud.spaceCode ? "已配置。换设备时填同一个空间码再点拉取。" : "只需要给同学网站链接和同步空间码。";
         }
 
         function readCloudForm() {
-            return {
-                supabaseUrl: $("#cloud-url").value.trim().replace(/\/$/, ""),
+            return normalizeCloudConfig({
+                supabaseUrl: $("#cloud-url").value.trim(),
                 anonKey: $("#cloud-key").value.trim(),
                 spaceCode: $("#cloud-space").value.trim()
+            });
+        }
+
+        function normalizeCloudConfig(config) {
+            return {
+                supabaseUrl: (config.supabaseUrl || DEFAULT_CLOUD.supabaseUrl).trim().replace(/\/$/, ""),
+                anonKey: (config.anonKey || DEFAULT_CLOUD.anonKey).trim(),
+                spaceCode: (config.spaceCode || "").trim()
             };
         }
 
         function saveCloudConfig() {
             const next = readCloudForm();
-            if (!next.supabaseUrl || !next.anonKey || !next.spaceCode) return toast("请完整填写云同步配置");
+            if (!next.spaceCode) return toast("请填写同步空间码");
             if (!/^https:\/\/.+\.supabase\.co$/.test(next.supabaseUrl)) return toast("Supabase URL 格式不正确");
             cloud = next;
             localStorage.setItem(CLOUD_KEY, JSON.stringify(cloud));
@@ -2586,12 +2619,19 @@
         }
 
         function requireCloudConfig() {
-            cloud = { ...cloud, ...readCloudForm() };
+            cloud = readCloudForm();
             if (!cloud.supabaseUrl || !cloud.anonKey || !cloud.spaceCode) {
-                toast("请先填写并保存云同步配置");
+                toast("请先填写同步空间码");
                 return false;
             }
             return true;
+        }
+
+        function makeSpaceCode() {
+            const bytes = crypto.getRandomValues(new Uint8Array(8));
+            const code = Array.from(bytes).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+            $("#cloud-space").value = `xc-${code}`;
+            toast("已生成空间码，请保存并发给对应同学");
         }
 
         async function cloudUpload() {
