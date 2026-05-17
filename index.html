@@ -75,7 +75,8 @@
             color: var(--ink);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
             line-height: 1.5;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
         }
 
         button, input, select, textarea {
@@ -92,12 +93,14 @@
         }
 
         .sidebar {
-            min-height: 100vh;
+            height: 100vh;
             background: var(--nav);
             color: var(--nav-ink);
             display: flex;
             flex-direction: column;
-            position: relative;
+            position: sticky;
+            top: 0;
+            overflow-y: auto;
             z-index: 3;
         }
 
@@ -640,6 +643,9 @@
 
         .reason-grid input {
             position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: 0;
             opacity: 0;
             pointer-events: none;
         }
