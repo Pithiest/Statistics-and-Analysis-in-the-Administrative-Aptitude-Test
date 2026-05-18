@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     target: "es2020",
-    sourcemap: false
+    sourcemap: false,
+    chunkSizeWarningLimit: 650
   }
 });

@@ -1,0 +1,29 @@
+name: Materialize source
+
+on:
+  push:
+    branches:
+      - "行测的统计与分析"
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: ${{ !contains(github.event.head_commit.message, '[source-materialized]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Prepare current source
+        run: node scripts/prepare-source.mjs
+      - name: Commit materialized source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f package-lock.json netlify.toml manifest.webmanifest sw.js icon.svg public/icon.svg src/analytics.ts src/constants.ts src/storage.ts src/sync.ts src/types.ts || true
+          git add index.html package.json vite.config.ts vercel.json tsconfig.json tsconfig.node.json scripts src public .github/workflows/materialize-source.yml
+          git commit -m "feat: materialize Vercel redesign [source-materialized]" || exit 0
+          git push
