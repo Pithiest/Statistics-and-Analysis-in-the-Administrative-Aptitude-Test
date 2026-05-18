@@ -320,7 +320,7 @@ td:last-child { white-space: nowrap; }
   .ledger-toolbar select:last-child { grid-column: 1 / -1; }
 }
 
-@media (max-width: 860px), (max-device-width: 900px), (orientation: portrait) and (max-width: 1500px) {
+@media (max-width: 860px), (orientation: portrait) and (max-width: 1024px) {
   body { padding-bottom: 86px; }
   .app-shell { display: block; }
   .sidebar { display: none; }
