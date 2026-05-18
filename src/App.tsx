@@ -97,6 +97,8 @@ const nav: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
 ];
 
 const chartPalette = ["#2563eb", "#0f766e", "#7c3aed", "#b45309", "#be123c", "#0891b2", "#475569"];
+const SYNC_DEBOUNCE_MS = 10_000;
+const PULL_INTERVAL_MS = 120_000;
 
 export function App() {
   const loaded = useMemo(loadState, []);
@@ -123,6 +125,8 @@ export function App() {
   const settingsRef = useRef(settings);
   const codeRef = useRef(spaceCode);
   const syncingRef = useRef(false);
+  const dirtyRef = useRef(false);
+  const lastPullRef = useRef(0);
   const debounceRef = useRef<number>();
 
   const data = useMemo(() => dashboard(records, settings), [records, settings]);
@@ -146,9 +150,13 @@ export function App() {
 
   useEffect(() => {
     if (!spaceCode) return undefined;
-    void syncNow();
-    const interval = window.setInterval(() => void syncNow(), 20_000);
-    const focus = () => void syncNow();
+    void pullIfDue(true);
+    const runBackgroundSync = () => {
+      if (dirtyRef.current) void syncNow({ upload: true });
+      else void pullIfDue(false);
+    };
+    const interval = window.setInterval(runBackgroundSync, PULL_INTERVAL_MS);
+    const focus = runBackgroundSync;
     window.addEventListener("focus", focus);
     window.addEventListener("online", focus);
     return () => {
@@ -170,6 +178,7 @@ export function App() {
   }
 
   function scheduleSync() {
+    dirtyRef.current = true;
     if (!codeRef.current) {
       setSyncState("local");
       return;
@@ -179,25 +188,41 @@ export function App() {
       return;
     }
     window.clearTimeout(debounceRef.current);
-    setSyncState("syncing");
-    debounceRef.current = window.setTimeout(() => void syncNow(), 800);
+    setSyncState("pending");
+    debounceRef.current = window.setTimeout(() => void syncNow({ upload: true }), SYNC_DEBOUNCE_MS);
   }
 
-  async function syncNow() {
+  function pullIfDue(force = false) {
+    const now = Date.now();
+    if (!force && now - lastPullRef.current < PULL_INTERVAL_MS) return;
+    lastPullRef.current = now;
+    void syncNow({ upload: false, quiet: !force });
+  }
+
+  async function syncNow(options: { upload?: boolean; quiet?: boolean } = {}) {
     const code = normalizeCode(codeRef.current);
-    if (!code || syncingRef.current) return;
+    if (!code) return;
+    if (syncingRef.current) {
+      if (options.upload) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = window.setTimeout(() => void syncNow({ upload: true }), 2_000);
+      }
+      return;
+    }
     if (!navigator.onLine) {
       setSyncState("offline");
       return;
     }
+    const upload = options.upload !== false;
     syncingRef.current = true;
-    setSyncState("syncing");
+    if (!options.quiet) setSyncState("syncing");
     try {
-      const next = await syncSpace(code, recordsRef.current, settingsRef.current);
+      const next = await syncSpace(code, recordsRef.current, settingsRef.current, { upload });
       setRecords(next.records);
       setSettings(next.settings);
       setLastSync(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
-      setSyncState("synced");
+      if (upload) dirtyRef.current = false;
+      setSyncState(dirtyRef.current ? "pending" : "synced");
     } catch (error) {
       console.error(error);
       setSyncState("error");
@@ -207,9 +232,9 @@ export function App() {
     }
   }
 
-  function updateSettings(next: Settings) {
+  function updateSettings(next: Settings, shouldSync = true) {
     setSettings(stampSettings(next));
-    scheduleSync();
+    if (shouldSync) scheduleSync();
   }
 
   function submit(continueInput = false) {
@@ -362,10 +387,10 @@ export function App() {
             <SyncIcon state={syncState} />
             <div>
               <strong>{syncLabel(syncState)}</strong>
-              <span>{spaceCode ? lastSync || "后台自动同步" : "设置空间码后跨设备使用"}</span>
+              <span>{syncHint(syncState, spaceCode, lastSync)}</span>
             </div>
           </div>
-          <span className="creator-mark">Pithiest</span>
+          <span className="creator-mark">Pithiest巨献</span>
         </div>
       </aside>
 
@@ -376,7 +401,7 @@ export function App() {
             <h1>{title(view)}</h1>
           </div>
           <div className="top-actions">
-            <button className="icon-btn" onClick={() => updateSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark" })} title="切换主题">
+            <button className="icon-btn" onClick={() => updateSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark" }, false)} title="切换主题">
               {settings.theme === "dark" ? <Sun /> : <Moon />}
             </button>
             <button className="soft-btn" onClick={() => setView("settings")}>
@@ -452,19 +477,26 @@ export function App() {
                 setSettings={updateSettings}
                 spaceCode={spaceCode}
                 setSpaceCode={(code) => {
-                  setSpaceCode(normalizeCode(code));
-                  setSyncState(code ? "syncing" : "local");
-                  window.setTimeout(() => void syncNow(), 0);
+                  const normalized = normalizeCode(code);
+                  codeRef.current = normalized;
+                  setSpaceCode(normalized);
+                  setSyncState(normalized ? "syncing" : "local");
+                  if (normalized) window.setTimeout(() => void syncNow({ upload: false }), 0);
                 }}
                 syncState={syncState}
                 lastSync={lastSync}
                 onGenerate={() => {
                   const code = generateCode();
+                  codeRef.current = code;
                   setSpaceCode(code);
+                  scheduleSync();
                   notify("空间码已生成。");
                 }}
-                onSync={() => void syncNow()}
+                onSync={() => void syncNow({ upload: true })}
                 onClear={() => {
+                  window.clearTimeout(debounceRef.current);
+                  dirtyRef.current = false;
+                  codeRef.current = "";
                   setSpaceCode("");
                   setSyncState("local");
                   setLastSync("");
@@ -498,7 +530,6 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
     <div className="stack">
       <section className="hero">
         <div>
-          <p>今日一句</p>
           <h2>{data.quote}</h2>
           <span>今天 {data.todayTotal} 题，累计 {data.total} 题，复盘队列 {data.pending.length} 条。</span>
           <div className="hero-actions">
@@ -532,8 +563,8 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
                 <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} />
                 <Tooltip />
                 <Area yAxisId="left" type="monotone" dataKey="total" name="题量" stroke="#2563eb" fill="#2563eb22" />
-                <Line yAxisId="right" type="monotone" dataKey="rate" name="正确率" stroke="#0f766e" strokeWidth={2.4} dot={false} />
-                <Line yAxisId="right" type="monotone" dataKey="pace" name="配速" stroke="#b45309" strokeWidth={2} dot={false} strokeDasharray="5 5" />
+                <Line yAxisId="right" type="monotone" dataKey="rate" name="正确率" stroke="#0f766e" strokeWidth={2.4} dot={false} connectNulls />
+                <Line yAxisId="right" type="monotone" dataKey="pace" name="配速" stroke="#b45309" strokeWidth={2} dot={false} strokeDasharray="5 5" connectNulls />
               </AreaChart>
             </ResponsiveContainer>
           </ChartBox>
@@ -706,6 +737,8 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
 }) {
   const modules = MODULES.filter((item) => item.name !== "全模块测试");
   const detail = moduleDetail(records, module, settings, subType, range);
+  const moduleAll = moduleDetail(records, module, settings, "全部题型", "全部");
+  const emptyText = moduleAll.total ? "当前时间范围暂无记录，可切换近 30 天、近 90 天或全部。" : "当前模块暂无记录。";
   return (
     <div className="stack">
       <div className="module-tabs">
@@ -726,6 +759,7 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
           {subTypeOptions(module).map((item) => <option key={item}>{item}</option>)}
         </select>
         <select value={range} onChange={(event) => setRange(event.target.value)}>
+          <option value="7">近 7 天</option>
           <option value="14">近 14 天</option>
           <option value="30">近 30 天</option>
           <option value="90">近 90 天</option>
@@ -751,12 +785,12 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
                   <YAxis yAxisId="left" tickLine={false} axisLine={false} domain={[0, 100]} />
                   <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} />
                   <Tooltip />
-                  <Line yAxisId="left" type="monotone" dataKey="rate" name="正确率" stroke="#2563eb" strokeWidth={2.6} dot={false} />
-                  <Line yAxisId="right" type="monotone" dataKey="pace" name="配速" stroke="#b45309" strokeWidth={2.2} dot={false} strokeDasharray="5 5" />
+                  <Line yAxisId="left" type="monotone" dataKey="rate" name="正确率" stroke="#2563eb" strokeWidth={2.6} dot={false} connectNulls />
+                  <Line yAxisId="right" type="monotone" dataKey="pace" name="配速" stroke="#b45309" strokeWidth={2.2} dot={false} strokeDasharray="5 5" connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             </ChartBox>
-          ) : <Empty text="当前筛选暂无记录。" />}
+          ) : <Empty text={emptyText} />}
         </Panel>
         <Panel title="错因拆解" note="按错题数">
           {detail.reasons.length ? (
@@ -789,7 +823,7 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
       <Panel title="最近记录">
         <div className="record-list compact">
           {detail.rows.slice(0, 6).map((item) => <RecordCard key={item.id} record={item} onEdit={onEdit} />)}
-          {!detail.rows.length && <Empty text="当前筛选没有记录。" />}
+          {!detail.rows.length && <Empty text={emptyText} />}
         </div>
       </Panel>
     </div>
@@ -933,8 +967,8 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
             <Field label="目标正确率"><input inputMode="numeric" value={settings.targetRate} onChange={(event) => setSettings({ ...settings, targetRate: Number(event.target.value) || DEFAULT_SETTINGS.targetRate })} /></Field>
           </div>
         </Panel>
-        <Panel title="空间码同步" note="保存后自动上传，打开页面会自动拉取">
-          <div className="sync-line"><SyncIcon state={syncState} /><strong>{syncLabel(syncState)}</strong><span>{spaceCode ? lastSync || "等待同步" : "未设置空间码"}</span></div>
+        <Panel title="空间码同步" note="数据变化后合并上传，打开页面自动拉取">
+          <div className="sync-line"><SyncIcon state={syncState} /><strong>{syncLabel(syncState)}</strong><span>{syncHint(syncState, spaceCode, lastSync)}</span></div>
           <div className="space-row">
             <input value={draft} onChange={(event) => setDraft(normalizeCode(event.target.value))} placeholder="输入或生成空间码" />
             <button className="primary-btn" onClick={() => setSpaceCode(draft)}><Save /> 保存</button>
@@ -959,7 +993,7 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
           <div className="version-panel">
             <strong>行测数据舱</strong>
             <span>本机保存，空间码自动同步，支持旧版 JSON 导入。</span>
-            <small>Pithiest · xc.Pithiest.cn</small>
+            <small>xc.Pithiest.cn</small>
           </div>
         </Panel>
       </section>
@@ -1035,7 +1069,17 @@ function title(view: ViewId) {
 }
 
 function syncLabel(state: SyncState) {
-  return { local: "本机保存", syncing: "同步中", synced: "已同步", offline: "离线待同步", error: "同步异常" }[state];
+  return { local: "本机已保存", pending: "等待同步", syncing: "同步中", synced: "已同步", offline: "离线待同步", error: "同步异常" }[state];
+}
+
+function syncHint(state: SyncState, spaceCode: string, lastSync: string) {
+  if (!spaceCode) return "设置空间码后跨设备使用";
+  if (state === "pending") return "约 10 秒后合并上传";
+  if (state === "syncing") return "正在处理云端数据";
+  if (state === "synced") return lastSync ? `${lastSync} 已更新` : "云端已就绪";
+  if (state === "offline") return "联网后自动继续";
+  if (state === "error") return "稍后会继续尝试";
+  return "本机优先保存";
 }
 
 function formatTimer(seconds: number) {

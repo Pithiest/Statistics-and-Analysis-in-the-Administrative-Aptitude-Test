@@ -7,7 +7,7 @@ export type ModuleName =
   | "常识判断";
 
 export type ViewId = "today" | "record" | "diagnosis" | "review" | "ledger" | "settings";
-export type SyncState = "local" | "syncing" | "synced" | "offline" | "error";
+export type SyncState = "local" | "pending" | "syncing" | "synced" | "offline" | "error";
 export type Theme = "light" | "dark";
 
 export type TrainingRecord = {
@@ -136,7 +136,43 @@ export const QUOTES = [
   "少一点凭感觉，多一点看数据。",
   "错题不丢人，重复错同一种原因才值得警惕。",
   "训练最怕模糊，统计就是把模糊变成可处理的线索。",
-  "每一条认真记录，都是下一次少丢分的证据。"
+  "每一条认真记录，都是下一次少丢分的证据。",
+  "别急着怀疑自己，先把问题具体到题型和错因。",
+  "做题不是堆数字，是把盲区一点点照亮。",
+  "今天的薄弱项，明天就可以变成稳定项。",
+  "状态会波动，记录会留下真正的趋势。",
+  "先稳住正确率，再把速度一点点压上去。",
+  "每一次限时训练，都是在提前熟悉考场压力。",
+  "复盘不是重看答案，是找出下次不再掉坑的动作。",
+  "能被记录的问题，就已经比模糊焦虑好解决。",
+  "别让错题只停在懊恼里，把它变成下一次的提示。",
+  "训练的价值，藏在你愿意面对细节的那几分钟里。",
+  "分数不会突然变好，但每天的判断会更清楚。",
+  "题目做完只是开始，原因看透才算结束。",
+  "慢一点没关系，先把每个失分点说清楚。",
+  "稳定来自重复，突破来自复盘。",
+  "今天少错一个同类问题，就是实打实的进步。",
+  "把错因写下来，脑子就不用反复背负模糊压力。",
+  "别怕数据不好看，不记录才真的没有方向。",
+  "高频错因就是最值得优先解决的提分入口。",
+  "一组题练速度，一次复盘练判断。",
+  "坚持不是硬撑，是每天都把训练做得更清楚一点。",
+  "真正的优势，是知道自己该先补哪一块。",
+  "越接近考试，越要相信清晰的数据而不是情绪。",
+  "先把能拿的分拿稳，再去挑战更难的部分。",
+  "每一次认真修正，都会在下一次答题里出现回报。",
+  "别追求完美记录，追求可用记录。",
+  "题量给你样本，错因给你方向。",
+  "今天的复盘，是明天少犹豫的底气。",
+  "练习要有锋利度，知道自己在练什么。",
+  "当数据开始说话，焦虑就会小很多。",
+  "一套系统不替你考试，但它能帮你少走弯路。",
+  "把弱项拆开处理，比一口气否定自己有效得多。",
+  "能稳定重复的进步，才是最可靠的进步。",
+  "不要和情绪争，和数据一起改。",
+  "今天认真一点，考场上就从容一点。",
+  "每个模块都有节奏，先看清，再提速。",
+  "真正拉开差距的，是别人跳过而你认真复盘的地方。"
 ];
 
 const KEYS = {
@@ -414,6 +450,7 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
 
 export function moduleDetail(records: TrainingRecord[], module: ModuleName, settings: Settings, subType = "全部题型", range = "30") {
   let rows = active(records).filter((item) => item.module === module);
+  const allModuleRows = rows;
   if (subType !== "全部题型") rows = rows.filter((item) => item.subType === subType);
   if (range !== "全部") rows = rows.filter((item) => item.date >= daysAgo(Number(range) - 1));
   const total = sum(rows, "total");
@@ -441,7 +478,7 @@ export function moduleDetail(records: TrainingRecord[], module: ModuleName, sett
     subTypes,
     reasons,
     pending,
-    trend: makeTrend(rows, 30),
+    trend: makeTrend(rows, range === "全部" ? trendDaysFor(allModuleRows) : Number(range) || 30),
     actions,
     targetRate: settings.targetRate
   };
@@ -460,9 +497,10 @@ export function normalizeCode(value: string) {
   return value.trim().replace(/[^A-Za-z0-9-]/g, "").replace(/--+/g, "-").slice(0, 48);
 }
 
-export async function syncSpace(spaceCode: string, records: TrainingRecord[], settings: Settings) {
+export async function syncSpace(spaceCode: string, records: TrainingRecord[], settings: Settings, options: { upload?: boolean } = {}) {
   const code = normalizeCode(spaceCode);
   if (!code) return { records, settings };
+  const shouldUpload = options.upload !== false;
   const hashes = await candidateHashes(code);
   let remoteRow: { payload: string; updated_at: string; space_hash: string } | null = null;
   for (const hash of hashes) {
@@ -478,15 +516,17 @@ export async function syncSpace(spaceCode: string, records: TrainingRecord[], se
   const mergedRecords = mergeRecords(records, remote?.records || []);
   const mergedSettings = mergeSettings(settings, remote?.settings);
   const targetHash = remoteRow?.space_hash || hashes[0];
-  await cloudFetch(`/rest/v1/xingce_sync?on_conflict=space_hash`, {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({
-      space_hash: targetHash,
-      payload: await encryptText(JSON.stringify({ version: 6, records: mergedRecords, settings: mergedSettings, updatedAt: new Date().toISOString() }), code),
-      updated_at: new Date().toISOString()
-    })
-  });
+  if (shouldUpload) {
+    await cloudFetch(`/rest/v1/xingce_sync?on_conflict=space_hash`, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({
+        space_hash: targetHash,
+        payload: await encryptText(JSON.stringify({ version: 6, records: mergedRecords, settings: mergedSettings, updatedAt: new Date().toISOString() }), code),
+        updated_at: new Date().toISOString()
+      })
+    });
+  }
   return { records: mergedRecords, settings: mergedSettings };
 }
 
@@ -684,14 +724,24 @@ function makeTrend(records: TrainingRecord[], days: number) {
   return Array.from({ length: days }, (_, index) => {
     const date = daysAgo(days - index - 1);
     const scoped = records.filter((item) => item.date === date);
+    const total = sum(scoped, "total");
     return {
       date,
       label: date.slice(5),
-      total: sum(scoped, "total"),
-      rate: percent(sum(scoped, "correct"), sum(scoped, "total")),
-      pace: avgPace(scoped)
+      total,
+      rate: total ? percent(sum(scoped, "correct"), total) : null,
+      pace: total ? avgPace(scoped) : null
     };
   });
+}
+
+function trendDaysFor(records: TrainingRecord[]) {
+  const dates = [...new Set(records.map((item) => item.date))].sort();
+  if (!dates.length) return 30;
+  const first = new Date(dates[0]);
+  const last = new Date(dates[dates.length - 1]);
+  const days = Math.round((last.getTime() - first.getTime()) / 86_400_000) + 1;
+  return Math.max(30, Math.min(90, days));
 }
 
 function makeHeatmap(records: TrainingRecord[], days: number) {
@@ -779,7 +829,7 @@ function normalizeModule(value: string): ModuleName | "" {
   if (/判断|推理/.test(text)) return "判断推理";
   if (/资料/.test(text)) return "资料分析";
   if (/数量|数学/.test(text)) return "数量关系";
-  if (/常识|政治/.test(text)) return "常识判断";
+  if (/常识|政治|法律|法治|宪法|行政法|刑法|民法|科技|人文|历史|地理|经济管理|管理常识|公文|时政/.test(text)) return "常识判断";
   if (/全测|全模块|全套|套卷|混合|混刷|综合/.test(text)) return "全模块测试";
   return "";
 }

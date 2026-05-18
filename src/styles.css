@@ -175,7 +175,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
 .panel h3 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: 0; }
 .panel-head span { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 800; }
-.chart-box { width: 100%; height: 294px; }
+.chart-box { width: 100%; height: 294px; animation: chartFade 0.24s ease both; }
 .chart-box.compact { height: 238px; }
 .recharts-wrapper text { fill: var(--muted); font-size: 12px; }
 .recharts-cartesian-grid line, .recharts-polar-grid-angle line, .recharts-polar-grid-concentric path { stroke: var(--line); }
@@ -305,6 +305,10 @@ td:last-child { white-space: nowrap; }
 .mobile-nav svg { width: 19px; height: 19px; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes chartFade {
+  from { opacity: 0.72; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 @media (max-width: 1180px) {
   .app-shell { grid-template-columns: 236px minmax(0, 1fr); }
