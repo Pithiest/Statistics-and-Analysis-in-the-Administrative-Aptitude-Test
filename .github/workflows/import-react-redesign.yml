@@ -1,0 +1,44 @@
+name: Import React redesign
+
+on:
+  push:
+    branches:
+      - "行测的统计与分析"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download React source from verified deploy
+        env:
+          BASE: "https://6a0a5f7c55042e304719a836--pithiest.netlify.app"
+        run: |
+          set -euo pipefail
+          mkdir -p src public
+          curl -fsSL "$BASE/source/index.html" -o index.html
+          curl -fsSL "$BASE/source/package.json" -o package.json
+          curl -fsSL "$BASE/source/tsconfig.json" -o tsconfig.json
+          curl -fsSL "$BASE/source/tsconfig.node.json" -o tsconfig.node.json
+          curl -fsSL "$BASE/source/vite.config.ts" -o vite.config.ts
+          curl -fsSL "$BASE/source/netlify.toml" -o netlify.toml
+          curl -fsSL "$BASE/source/src/App.tsx" -o src/App.tsx
+          curl -fsSL "$BASE/source/src/main.tsx" -o src/main.tsx
+          curl -fsSL "$BASE/source/src/styles.css" -o src/styles.css
+          curl -fsSL "$BASE/source/src/vite-env.d.ts" -o src/vite-env.d.ts
+          curl -fsSL "$BASE/source/public/manifest.webmanifest" -o public/manifest.webmanifest
+          curl -fsSL "$BASE/source/public/icon.svg" -o public/icon.svg
+          curl -fsSL "$BASE/source/public/sw.js" -o public/sw.js
+          rm -f manifest.webmanifest icon.svg sw.js
+      - name: Remove temporary workflow and commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/import-react-redesign.yml
+          git add -A
+          git commit -m "Rebuild app as React synced dashboard" || exit 0
+          git push
