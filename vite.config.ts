@@ -6,6 +6,14 @@ export default defineConfig({
   build: {
     target: "es2020",
     sourcemap: false,
-    chunkSizeWarningLimit: 650
+    chunkSizeWarningLimit: 650,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom", "framer-motion"],
+          charts: ["recharts"]
+        }
+      }
+    }
   }
 });

@@ -5,8 +5,16 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://atwsraivphybkfmye
 const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publishable_y6wlba5S8qYJebIgnc389Q_zW6pMJnv";
 const SOURCE_KEY = "pithiest-xingce-source-v5";
 
+const remotePayload = await readRemotePayload().catch((error) => {
+  console.warn(`Remote source payload unavailable: ${error.message}`);
+  return null;
+});
 const localPayload = await readLocalPayload().catch(() => null);
-const payload = localPayload || (await readRemotePayload());
+const payload = remotePayload || localPayload;
+
+if (!payload) {
+  throw new Error("Source payload is empty.");
+}
 
 for (const file of payload.delete || []) {
   await rm(resolve(file), { force: true });
