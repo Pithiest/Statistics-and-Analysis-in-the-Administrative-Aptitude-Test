@@ -1,4 +1,4 @@
-const CACHE_NAME = "pithiest-xingce-v5";
+const CACHE_NAME = "pithiest-xingce-v6";
 const ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/pithiest-icon.svg"];
 
 self.addEventListener("install", (event) => {
