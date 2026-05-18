@@ -1,12 +1,5 @@
-const CACHE_NAME = "xingce-training-v21";
-const ASSETS = [
-  "./",
-  "./index.html",
-  "./manifest.webmanifest",
-  "./icon.svg",
-  "https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js",
-  "https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"
-];
+const CACHE_NAME = "xingce-training-react-v1";
+const ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -31,9 +24,9 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(event.request).then((response) => {
         const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
+        caches.open(CACHE_NAME).then((cache) => cache.put("/index.html", copy));
         return response;
-      }).catch(() => caches.match("./index.html"))
+      }).catch(() => caches.match("/index.html"))
     );
     return;
   }
@@ -45,7 +38,7 @@ self.addEventListener("fetch", (event) => {
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
         return response;
-      }).catch(() => caches.match("./index.html"));
+      });
     })
   );
 });

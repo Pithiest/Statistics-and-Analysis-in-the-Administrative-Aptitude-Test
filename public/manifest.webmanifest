@@ -1,14 +1,14 @@
 {
   "name": "行测训练驾驶舱",
   "short_name": "行测训练",
-  "start_url": "./",
-  "scope": "./",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#f7f4ed",
+  "background_color": "#0f172a",
   "theme_color": "#2563eb",
   "icons": [
     {
-      "src": "icon.svg",
+      "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
