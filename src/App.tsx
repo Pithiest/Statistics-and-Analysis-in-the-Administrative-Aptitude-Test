@@ -1,475 +1,202 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { del, get, set } from "idb-keyval";
 import {
-  Activity,
-  BadgeCheck,
   BarChart3,
-  CalendarClock,
   CheckCircle2,
   Cloud,
   CloudOff,
-  Database,
   Download,
+  Edit3,
+  Flame,
   Gauge,
+  KeyRound,
   LayoutDashboard,
-  LogOut,
+  ListChecks,
   Moon,
   Plus,
-  Radar,
   RefreshCw,
   Save,
   Search,
-  Settings,
-  ShieldCheck,
   Sparkles,
-  SquarePen,
   Sun,
   Table2,
   TimerReset,
   Trash2,
   Upload,
-  UserRound
+  Wand2
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  PolarAngleAxis,
-  PolarGrid,
-  Radar as RadarShape,
-  RadarChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from "recharts";
-import { createClient, Session } from "@supabase/supabase-js";
+  DEFAULT_FORM,
+  DEFAULT_SETTINGS,
+  ERROR_REASONS,
+  MODULES,
+  accent,
+  createRecord,
+  dashboard,
+  exportCsv,
+  firstSubType,
+  generateCode,
+  loadState,
+  moduleDetail,
+  normalizeCode,
+  normalizeRecords,
+  normalizeSettings,
+  paceLabel,
+  percent,
+  saveRecords,
+  saveSettings,
+  saveSpaceCode,
+  shortName,
+  suggestedMinutes,
+  syncSpace,
+  today
+} from "./model";
+import type { EntryForm, ModuleName, Settings, SyncState, TrainingRecord, ViewId } from "./model";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://atwsraivphybkfmyeubd.supabase.co";
-const SUPABASE_KEY =
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publishable_y6wlba5S8qYJebIgnc389Q_zW6pMJnv";
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-});
-
-const LOCAL_RECORDS = "xingce_react_records_v1";
-const LOCAL_SETTINGS = "xingce_react_settings_v1";
-const MIGRATION_DONE = "xingce_react_legacy_migrated";
-
-type View = "overview" | "entry" | "diagnosis" | "ledger" | "account";
-type Theme = "light" | "dark";
-type SyncStatus = "local" | "syncing" | "synced" | "offline" | "error";
-
-type TrainingRecord = {
-  id: string;
-  date: string;
-  module: string;
-  subType: string;
-  total: number;
-  correct: number;
-  duration: number;
-  errorReason: string;
-  note: string;
-  createdAt: string;
-  updatedAt: string;
-  deletedAt?: string | null;
-};
-
-type RemoteRecord = {
-  id: string;
-  user_id: string;
-  date: string;
-  module: string;
-  sub_type: string;
-  total: number;
-  correct: number;
-  duration: number | string;
-  error_reason: string;
-  note: string;
-  created_at: string;
-  updated_at: string;
-  deleted_at?: string | null;
-};
-
-type AppSettings = {
-  examDate: string;
-  dailyGoal: number;
-  targetRate: number;
-  theme: Theme;
-  updatedAt: string;
-};
-
-type EntryForm = {
-  date: string;
-  module: string;
-  subType: string;
-  total: string;
-  correct: string;
-  duration: string;
-  errorReason: string;
-  note: string;
-};
-
-const MODULES = {
-  "言语理解与表达": {
-    short: "言语",
-    color: "#4f46e5",
-    speed: 50,
-    subs: ["逻辑填空", "中心理解", "细节判断", "语句表达", "篇章阅读", "综合卷/混刷"]
-  },
-  判断推理: {
-    short: "判断",
-    color: "#0f766e",
-    speed: 52.5,
-    subs: ["图形推理", "定义判断", "类比推理", "逻辑判断", "综合卷/混刷"]
-  },
-  资料分析: {
-    short: "资料",
-    color: "#2563eb",
-    speed: 60,
-    subs: ["文字资料", "表格资料", "图形资料", "综合卷/混刷"]
-  },
-  数量关系: {
-    short: "数量",
-    color: "#be123c",
-    speed: 90,
-    subs: ["工程问题", "行程问题", "经济利润", "排列组合", "几何问题", "综合卷/混刷"]
-  },
-  常识判断: {
-    short: "常识",
-    color: "#b45309",
-    speed: 45,
-    subs: ["政治理论", "法律常识", "科技人文", "经济管理", "综合卷/混刷"]
-  }
-} as const;
-
-const MODULE_NAMES = Object.keys(MODULES);
-const REASONS = ["无", "粗心看错", "时间紧迫", "知识盲区", "方法不熟", "逻辑掉坑"];
-const QUICK_PICKS = [
-  { name: "言语 20", module: "言语理解与表达", total: 20, duration: 18 },
-  { name: "判断 20", module: "判断推理", total: 20, duration: 18 },
-  { name: "资料 15", module: "资料分析", total: 15, duration: 15 },
-  { name: "数量 10", module: "数量关系", total: 10, duration: 15 },
-  { name: "常识 20", module: "常识判断", total: 20, duration: 15 },
-  { name: "全套 100", module: "言语理解与表达", total: 100, duration: 120 }
+const nav: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
+  { id: "today", label: "总览", icon: <LayoutDashboard /> },
+  { id: "record", label: "录入", icon: <Plus /> },
+  { id: "diagnosis", label: "诊断", icon: <BarChart3 /> },
+  { id: "review", label: "复盘", icon: <ListChecks /> },
+  { id: "ledger", label: "台账", icon: <Table2 /> },
+  { id: "settings", label: "设置", icon: <KeyRound /> }
 ];
 
-const defaultSettings: AppSettings = {
-  examDate: "",
-  dailyGoal: 80,
-  targetRate: 80,
-  theme: "light",
-  updatedAt: new Date().toISOString()
-};
-
-const emptyForm = (): EntryForm => ({
-  date: today(),
-  module: MODULE_NAMES[0],
-  subType: MODULES["言语理解与表达"].subs[5],
-  total: "20",
-  correct: "",
-  duration: "18",
-  errorReason: "无",
-  note: ""
-});
-
 export function App() {
-  const [records, setRecords] = useState<TrainingRecord[]>([]);
-  const [settings, setSettingsState] = useState<AppSettings>(defaultSettings);
-  const [activeView, setActiveView] = useState<View>("overview");
-  const [session, setSession] = useState<Session | null>(null);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>("local");
+  const loaded = useMemo(loadState, []);
+  const [view, setView] = useState<ViewId>("today");
+  const [records, setRecords] = useState<TrainingRecord[]>(loaded.records);
+  const [settings, setSettings] = useState<Settings>(loaded.settings);
+  const [spaceCode, setSpaceCode] = useState(loaded.spaceCode);
+  const [syncState, setSyncState] = useState<SyncState>(loaded.spaceCode ? "syncing" : "local");
   const [lastSync, setLastSync] = useState("");
   const [toast, setToast] = useState("");
-  const [booting, setBooting] = useState(true);
-  const [legacyCount, setLegacyCount] = useState(0);
-  const [syncTick, setSyncTick] = useState(0);
-  const [form, setForm] = useState<EntryForm>(emptyForm);
+  const [form, setForm] = useState<EntryForm>({ ...DEFAULT_FORM, date: today() });
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [ledgerModule, setLedgerModule] = useState("全部");
-  const [diagnosisModule, setDiagnosisModule] = useState(MODULE_NAMES[0]);
-  const [email, setEmail] = useState("");
-  const [otp, setOtp] = useState("");
-  const [authMessage, setAuthMessage] = useState("");
-  const [timerMs, setTimerMs] = useState(0);
-  const [timerRunning, setTimerRunning] = useState(false);
-  const timerStarted = useRef(0);
-  const timerBase = useRef(0);
+  const [timer, setTimer] = useState(0);
+  const [timerOn, setTimerOn] = useState(false);
+  const [ledgerQuery, setLedgerQuery] = useState("");
+  const [ledgerModule, setLedgerModule] = useState<ModuleName | "全部">("全部");
+  const [diagnosisModule, setDiagnosisModule] = useState<ModuleName>("言语理解");
   const recordsRef = useRef(records);
   const settingsRef = useRef(settings);
+  const codeRef = useRef(spaceCode);
+  const syncingRef = useRef(false);
+  const debounceRef = useRef<number>();
 
-  const visibleRecords = useMemo(
-    () => records.filter((record) => !record.deletedAt).sort((a, b) => b.date.localeCompare(a.date)),
-    [records]
-  );
-  const stats = useMemo(() => makeStats(visibleRecords, settings), [visibleRecords, settings]);
-  const trend = useMemo(() => makeTrend(visibleRecords, 14), [visibleRecords]);
-  const moduleStats = useMemo(() => makeModuleStats(visibleRecords), [visibleRecords]);
-  const reasonStats = useMemo(() => makeReasonStats(visibleRecords), [visibleRecords]);
-  const filteredLedger = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return visibleRecords.filter((record) => {
-      const moduleOk = ledgerModule === "全部" || record.module === ledgerModule;
-      const queryOk =
-        !normalizedQuery ||
-        [record.module, record.subType, record.errorReason, record.note].join(" ").toLowerCase().includes(normalizedQuery);
-      return moduleOk && queryOk;
-    });
-  }, [ledgerModule, query, visibleRecords]);
+  const data = useMemo(() => dashboard(records, settings), [records, settings]);
+  const currentModule = MODULES.find((item) => item.name === form.module) || MODULES[0];
 
   useEffect(() => {
     recordsRef.current = records;
+    saveRecords(records);
   }, [records]);
 
   useEffect(() => {
     settingsRef.current = settings;
+    saveSettings(settings);
     document.documentElement.dataset.theme = settings.theme;
   }, [settings]);
 
   useEffect(() => {
-    let mounted = true;
-    async function boot() {
-      const [storedRecords, storedSettings, migrated, auth] = await Promise.all([
-        get<TrainingRecord[]>(LOCAL_RECORDS),
-        get<AppSettings>(LOCAL_SETTINGS),
-        get<boolean>(MIGRATION_DONE),
-        supabase.auth.getSession()
-      ]);
-      if (!mounted) return;
-      const localRecords = Array.isArray(storedRecords) ? storedRecords : [];
-      const localSettings = storedSettings ? { ...defaultSettings, ...storedSettings } : defaultSettings;
-      setRecords(localRecords);
-      setSettingsState(localSettings);
-      setSession(auth.data.session ?? null);
-      if (!migrated) setLegacyCount(loadLegacyRecords().length);
-      setBooting(false);
-    }
-    boot();
-    const {
-      data: { subscription }
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      if (nextSession) void pullRemote(nextSession);
-    });
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
+    codeRef.current = spaceCode;
+    saveSpaceCode(spaceCode);
+  }, [spaceCode]);
 
   useEffect(() => {
-    if (!session || syncTick === 0) return;
-    const id = window.setTimeout(() => void pushRemote(), 800);
-    return () => window.clearTimeout(id);
-  }, [session, syncTick]);
-
-  useEffect(() => {
-    if (!session) return;
-    const interval = window.setInterval(() => void pullRemote(session), 20000);
-    const onFocus = () => void pullRemote(session);
-    const onOnline = () => {
-      setSyncStatus("syncing");
-      void pushRemote().then(() => pullRemote(session));
-    };
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("online", onOnline);
+    if (!spaceCode) return undefined;
+    void syncNow();
+    const interval = window.setInterval(() => void syncNow(), 20_000);
+    const focus = () => void syncNow();
+    window.addEventListener("focus", focus);
+    window.addEventListener("online", focus);
     return () => {
       window.clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("online", onOnline);
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("online", focus);
     };
-  }, [session]);
+  }, [spaceCode]);
 
   useEffect(() => {
-    if (!timerRunning) return;
-    const id = window.setInterval(() => {
-      setTimerMs(timerBase.current + Date.now() - timerStarted.current);
-    }, 250);
+    if (!timerOn) return undefined;
+    const id = window.setInterval(() => setTimer((value) => value + 1), 1000);
     return () => window.clearInterval(id);
-  }, [timerRunning]);
+  }, [timerOn]);
 
   function notify(message: string) {
     setToast(message);
-    window.setTimeout(() => setToast(""), 2200);
+    window.setTimeout(() => setToast(""), 2300);
   }
 
-  async function commitRecords(next: TrainingRecord[], dirty = true) {
-    const normalized = normalizeRecords(next);
-    recordsRef.current = normalized;
-    setRecords(normalized);
-    await set(LOCAL_RECORDS, normalized);
-    if (dirty) {
-      setSyncStatus(session ? "syncing" : "local");
-      setSyncTick((value) => value + 1);
+  function scheduleSync() {
+    if (!codeRef.current) {
+      setSyncState("local");
+      return;
     }
-  }
-
-  async function commitSettings(next: AppSettings, dirty = true) {
-    const normalized = { ...next, updatedAt: next.updatedAt || new Date().toISOString() };
-    settingsRef.current = normalized;
-    setSettingsState(normalized);
-    await set(LOCAL_SETTINGS, normalized);
-    if (dirty) {
-      setSyncStatus(session ? "syncing" : "local");
-      setSyncTick((value) => value + 1);
-    }
-  }
-
-  async function pushRemote() {
-    if (!session) return;
     if (!navigator.onLine) {
-      setSyncStatus("offline");
+      setSyncState("offline");
       return;
     }
-    try {
-      setSyncStatus("syncing");
-      const rows = recordsRef.current.map((record) => toRemoteRecord(record, session.user.id));
-      if (rows.length) {
-        const { error } = await supabase.from("training_records").upsert(rows, { onConflict: "id" });
-        if (error) throw error;
-      }
-      const { error: settingsError } = await supabase.from("user_settings").upsert({
-        user_id: session.user.id,
-        exam_date: settingsRef.current.examDate || null,
-        daily_goal: settingsRef.current.dailyGoal,
-        target_rate: settingsRef.current.targetRate,
-        theme: settingsRef.current.theme,
-        updated_at: settingsRef.current.updatedAt
-      });
-      if (settingsError) throw settingsError;
-      setSyncStatus("synced");
-      setLastSync(new Date().toLocaleTimeString());
-    } catch (error) {
-      console.error(error);
-      setSyncStatus("error");
-    }
+    window.clearTimeout(debounceRef.current);
+    setSyncState("syncing");
+    debounceRef.current = window.setTimeout(() => void syncNow(), 800);
   }
 
-  async function pullRemote(currentSession = session) {
-    if (!currentSession || !navigator.onLine) return;
-    try {
-      setSyncStatus("syncing");
-      const [{ data: remoteRecords, error }, { data: remoteSettings, error: settingsError }] = await Promise.all([
-        supabase
-          .from("training_records")
-          .select("*")
-          .eq("user_id", currentSession.user.id)
-          .order("updated_at", { ascending: false }),
-        supabase.from("user_settings").select("*").eq("user_id", currentSession.user.id).maybeSingle()
-      ]);
-      if (error) throw error;
-      if (settingsError) throw settingsError;
-      const merged = mergeRecords(recordsRef.current, (remoteRecords || []).map(fromRemoteRecord));
-      await commitRecords(merged, false);
-      if (remoteSettings) {
-        const remote = {
-          examDate: remoteSettings.exam_date || "",
-          dailyGoal: remoteSettings.daily_goal || 80,
-          targetRate: remoteSettings.target_rate || 80,
-          theme: remoteSettings.theme === "dark" ? "dark" : "light",
-          updatedAt: remoteSettings.updated_at
-        } satisfies AppSettings;
-        if (new Date(remote.updatedAt).getTime() >= new Date(settingsRef.current.updatedAt).getTime()) {
-          await commitSettings(remote, false);
-        }
-      }
-      setSyncStatus("synced");
-      setLastSync(new Date().toLocaleTimeString());
-    } catch (error) {
-      console.error(error);
-      setSyncStatus("error");
-    }
-  }
-
-  async function sendOtp(event: FormEvent) {
-    event.preventDefault();
-    setAuthMessage("正在发送验证码...");
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin }
-    });
-    setAuthMessage(error ? `发送失败：${error.message}` : "验证码或登录链接已发送，请查收邮箱。");
-  }
-
-  async function verifyOtp(event: FormEvent) {
-    event.preventDefault();
-    const { error } = await supabase.auth.verifyOtp({ email, token: otp, type: "email" });
-    setAuthMessage(error ? `验证失败：${error.message}` : "登录成功，正在同步数据。");
-  }
-
-  async function signOut() {
-    await supabase.auth.signOut();
-    setSession(null);
-    setSyncStatus("local");
-    notify("已退出账号，本机数据仍然保留");
-  }
-
-  async function migrateLegacy() {
-    const legacy = loadLegacyRecords();
-    if (!legacy.length) return;
-    const now = new Date().toISOString();
-    const migrated = legacy.map((record: Record<string, unknown>) =>
-      normalizeRecord({
-        id: crypto.randomUUID(),
-        date: record.date,
-        module: normalizeModule(String(record.module || "")),
-        subType: record.subType || record.sub_type || "综合卷/混刷",
-        total: record.total,
-        correct: record.correct,
-        duration: record.duration,
-        errorReason: record.errorReason || record.error_reason || "无",
-        note: record.note || "",
-        createdAt: record.createdAt || record.created_at || now,
-        updatedAt: record.updatedAt || record.updated_at || now
-      })
-    );
-    await commitRecords(mergeRecords(recordsRef.current, migrated.filter(Boolean) as TrainingRecord[]), true);
-    await set(MIGRATION_DONE, true);
-    setLegacyCount(0);
-    notify("旧数据已迁移到新版");
-  }
-
-  function saveRecord(keepForm = false) {
-    const record = normalizeRecord({
-      id: editingId || crypto.randomUUID(),
-      date: form.date,
-      module: form.module,
-      subType: form.subType,
-      total: form.total,
-      correct: form.correct,
-      duration: form.duration,
-      errorReason: form.errorReason,
-      note: form.note,
-      createdAt: editingId ? records.find((item) => item.id === editingId)?.createdAt : new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-    if (!record) {
-      notify("请检查题量、正确数和耗时");
+  async function syncNow() {
+    const code = normalizeCode(codeRef.current);
+    if (!code || syncingRef.current) return;
+    if (!navigator.onLine) {
+      setSyncState("offline");
       return;
     }
-    const next = editingId
-      ? records.map((item) => (item.id === editingId ? record : item))
-      : [record, ...records];
-    void commitRecords(next, true);
-    notify(editingId ? "记录已更新，稍后自动同步" : "记录已保存，稍后自动同步");
+    syncingRef.current = true;
+    setSyncState("syncing");
+    try {
+      const next = await syncSpace(code, recordsRef.current, settingsRef.current);
+      setRecords(next.records);
+      setSettings(next.settings);
+      setLastSync(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
+      setSyncState("synced");
+    } catch (error) {
+      console.error(error);
+      setSyncState("error");
+      notify("同步失败，稍后会继续尝试。");
+    } finally {
+      syncingRef.current = false;
+    }
+  }
+
+  function updateSettings(next: Settings) {
+    setSettings(normalizeSettings({ ...next, updatedAt: new Date().toISOString() }));
+    scheduleSync();
+  }
+
+  function submit(continueInput = false) {
+    const previous = editingId ? records.find((item) => item.id === editingId) : undefined;
+    const nextRecord = createRecord({ ...form, duration: form.duration || suggestedMinutes(form.module, form.total) }, previous);
+    if (!nextRecord) {
+      notify("题量和正确数需要重新检查。");
+      return;
+    }
+    setRecords((list) => (previous ? list.map((item) => (item.id === previous.id ? nextRecord : item)) : [nextRecord, ...list]));
     setEditingId(null);
-    if (keepForm) {
-      setForm((prev) => ({ ...prev, correct: "", note: "" }));
-    } else {
-      setForm(emptyForm());
-      setActiveView("overview");
-    }
+    setTimer(0);
+    setTimerOn(false);
+    setForm((old) => ({
+      ...DEFAULT_FORM,
+      date: continueInput ? old.date : today(),
+      module: continueInput ? old.module : "全模块测试",
+      subType: continueInput ? old.subType : "套卷混合",
+      total: continueInput ? old.total : "100",
+      duration: continueInput ? old.duration : "90"
+    }));
+    scheduleSync();
+    notify(spaceCode ? "已保存，后台自动同步。" : "已保存到本机。");
   }
 
-  function editRecord(record: TrainingRecord) {
+  function edit(record: TrainingRecord) {
+    setEditingId(record.id);
     setForm({
       date: record.date,
       module: record.module,
@@ -478,247 +205,148 @@ export function App() {
       correct: String(record.correct),
       duration: String(record.duration),
       errorReason: record.errorReason,
+      tags: record.tags.join(" "),
       note: record.note
     });
-    setEditingId(record.id);
-    setActiveView("entry");
+    setView("record");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function deleteRecord(record: TrainingRecord) {
-    if (!window.confirm("确定删除这条记录吗？登录后会自动同步删除。")) return;
+  function softDelete(record: TrainingRecord) {
     const now = new Date().toISOString();
-    void commitRecords(
-      records.map((item) => (item.id === record.id ? { ...item, deletedAt: now, updatedAt: now } : item)),
-      true
-    );
-    notify("记录已删除");
+    setRecords((list) => list.map((item) => (item.id === record.id ? { ...item, deletedAt: now, updatedAt: now } : item)));
+    scheduleSync();
+    notify("记录已删除。");
   }
 
-  function applyQuickPick(pick: (typeof QUICK_PICKS)[number]) {
-    setForm({
-      ...emptyForm(),
-      module: pick.module,
-      subType: lastSubType(pick.module),
-      total: String(pick.total),
-      duration: String(pick.duration)
-    });
-    setActiveView("entry");
+  function markReviewed(record: TrainingRecord) {
+    setRecords((list) => list.map((item) => (item.id === record.id ? { ...item, reviewStatus: "reviewed", updatedAt: new Date().toISOString() } : item)));
+    scheduleSync();
   }
 
-  function toggleTimer() {
-    if (timerRunning) {
-      timerBase.current = timerMs;
-      setTimerRunning(false);
-      const minutes = Math.max(1, Math.round((timerMs / 60000) * 10) / 10);
-      setForm((prev) => ({ ...prev, duration: String(minutes) }));
-      return;
-    }
-    timerStarted.current = Date.now();
-    timerBase.current = timerMs;
-    setTimerRunning(true);
-  }
-
-  function resetTimer() {
-    timerBase.current = 0;
-    timerStarted.current = 0;
-    setTimerRunning(false);
-    setTimerMs(0);
-  }
-
-  async function exportJson() {
-    download(
-      `行测训练备份_${today()}.json`,
-      JSON.stringify({ version: 30, exportedAt: new Date().toISOString(), settings, records: visibleRecords }, null, 2),
-      "application/json;charset=utf-8"
-    );
-  }
-
-  function exportCsv() {
-    const header = ["日期", "模块", "题型", "总题", "正确", "正确率", "耗时", "配速", "错因", "笔记"];
-    const body = filteredLedger.map((record) => [
-      record.date,
-      record.module,
-      record.subType,
-      record.total,
-      record.correct,
-      `${rate(record.correct, record.total)}%`,
-      record.duration,
-      `${pace(record)}s/题`,
-      record.errorReason,
-      record.note
-    ]);
-    const csv = "\uFEFF" + [header, ...body].map((row) => row.map(csvCell).join(",")).join("\n");
-    download(`行测台账_${today()}.csv`, csv, "text/csv;charset=utf-8");
-  }
-
-  function importJson(file: File | undefined) {
+  function importBackup(file?: File) {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async () => {
-      const parsed = safeParse(String(reader.result));
-      const imported = Array.isArray(parsed) ? parsed : parsed?.records;
-      if (!Array.isArray(imported)) {
-        notify("JSON 格式无法识别");
-        return;
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || "{}"));
+        const imported = normalizeRecords(Array.isArray(parsed) ? parsed : parsed.records);
+        if (!imported.length) throw new Error("empty");
+        setRecords((list) => [...imported, ...list]);
+        if (parsed.settings) setSettings(normalizeSettings(parsed.settings));
+        scheduleSync();
+        notify(`已导入 ${imported.length} 条记录。`);
+      } catch {
+        notify("导入失败，请检查备份文件。");
       }
-      const now = new Date().toISOString();
-      const next = imported
-        .map((item: Record<string, unknown>) =>
-          normalizeRecord({
-            id: typeof item.id === "string" && isUuid(item.id) ? item.id : crypto.randomUUID(),
-            date: item.date,
-            module: normalizeModule(String(item.module || "")),
-            subType: item.subType || item.sub_type || "综合卷/混刷",
-            total: item.total,
-            correct: item.correct,
-            duration: item.duration,
-            errorReason: item.errorReason || item.error_reason || "无",
-            note: item.note || "",
-            createdAt: item.createdAt || item.created_at || now,
-            updatedAt: item.updatedAt || item.updated_at || now
-          })
-        )
-        .filter(Boolean) as TrainingRecord[];
-      await commitRecords(mergeRecords(recordsRef.current, next), true);
-      notify("JSON 已导入并等待自动同步");
     };
-    reader.readAsText(file, "utf-8");
+    reader.readAsText(file);
   }
 
-  if (booting) {
-    return (
-      <div className="boot">
-        <Sparkles />
-        <span>正在启动训练驾驶舱</span>
-      </div>
-    );
+  function download(name: string, content: string, type: string) {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    URL.revokeObjectURL(url);
   }
+
+  const ledger = data.rows.filter((item) => {
+    const text = `${item.date} ${item.module} ${item.subType} ${item.errorReason} ${item.tags.join(" ")} ${item.note}`.toLowerCase();
+    return (ledgerModule === "全部" || item.module === ledgerModule) && (!ledgerQuery || text.includes(ledgerQuery.toLowerCase()));
+  });
 
   return (
-    <div className="shell">
+    <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">行</div>
+          <img src="/pithiest-icon.svg" alt="" />
           <div>
-            <strong>行测训练驾驶舱</strong>
-            <span>{session ? "账号自动同步" : "本机优先保存"}</span>
+            <strong>行测统计</strong>
+            <span>训练数据系统</span>
           </div>
         </div>
-        <nav className="nav">
-          <NavButton active={activeView === "overview"} icon={<LayoutDashboard />} label="总览" onClick={() => setActiveView("overview")} />
-          <NavButton active={activeView === "entry"} icon={<SquarePen />} label="录入" onClick={() => setActiveView("entry")} />
-          <NavButton active={activeView === "diagnosis"} icon={<Activity />} label="诊断" onClick={() => setActiveView("diagnosis")} />
-          <NavButton active={activeView === "ledger"} icon={<Table2 />} label="台账" onClick={() => setActiveView("ledger")} />
-          <NavButton active={activeView === "account"} icon={<UserRound />} label="账户" onClick={() => setActiveView("account")} />
+        <nav className="side-nav">
+          {nav.map((item) => (
+            <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          ))}
         </nav>
         <div className="sync-card">
-          <SyncIcon status={syncStatus} />
+          <SyncIcon state={syncState} />
           <div>
-            <strong>{syncLabel(syncStatus)}</strong>
-            <span>{lastSync ? `最近同步 ${lastSync}` : session ? "登录后自动同步" : "登录可跨设备同步"}</span>
+            <strong>{syncLabel(syncState)}</strong>
+            <span>{spaceCode ? lastSync || "后台自动同步" : "设置空间码后跨设备使用"}</span>
           </div>
         </div>
       </aside>
 
-      <main className="main">
+      <main className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Training Intelligence</p>
-            <h1>{viewTitle(activeView)}</h1>
+            <p>XINGCE TRAINING STUDIO</p>
+            <h1>{title(view)}</h1>
           </div>
           <div className="top-actions">
-            <button className="icon-btn" onClick={() => commitSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark", updatedAt: new Date().toISOString() })}>
+            <button className="icon-btn" onClick={() => updateSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark" })} title="切换主题">
               {settings.theme === "dark" ? <Sun /> : <Moon />}
             </button>
-            <button className="btn" onClick={() => setActiveView("account")}>
-              <ShieldCheck /> {session ? "已登录" : "登录同步"}
+            <button className="soft-btn" onClick={() => setView("settings")}>
+              <KeyRound /> 空间码
             </button>
-            <button className="btn primary" onClick={() => setActiveView("entry")}>
-              <Plus /> 新增记录
+            <button className="primary-btn" onClick={() => setView("record")}>
+              <Plus /> 录入
             </button>
           </div>
         </header>
 
         <AnimatePresence mode="wait">
-          <motion.section
-            key={activeView}
-            className="view"
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.22 }}
-          >
-            {activeView === "overview" && (
-              <Overview
-                stats={stats}
-                trend={trend}
-                moduleStats={moduleStats}
-                reasonStats={reasonStats}
-                records={visibleRecords}
-                settings={settings}
-                legacyCount={legacyCount}
-                onMigrate={migrateLegacy}
-                onQuickPick={applyQuickPick}
-              />
-            )}
-            {activeView === "entry" && (
-              <EntryView
+          <motion.section key={view} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.22 }} className="page">
+            {view === "today" && <Today data={data} settings={settings} onRecord={() => setView("record")} onReview={() => setView("review")} />}
+            {view === "record" && (
+              <RecordView
                 form={form}
                 setForm={setForm}
-                editingId={editingId}
-                timerMs={timerMs}
-                timerRunning={timerRunning}
-                onTimer={toggleTimer}
-                onTimerReset={resetTimer}
-                onSave={() => saveRecord(false)}
-                onSaveNext={() => saveRecord(true)}
-                onCancel={() => {
-                  setEditingId(null);
-                  setForm(emptyForm());
+                currentModule={currentModule}
+                timer={timer}
+                timerOn={timerOn}
+                editing={Boolean(editingId)}
+                onTimer={() => setTimerOn((value) => !value)}
+                onResetTimer={() => {
+                  setTimer(0);
+                  setTimerOn(false);
                 }}
-                onQuickPick={applyQuickPick}
+                onSave={() => submit(false)}
+                onSaveContinue={() => submit(true)}
               />
             )}
-            {activeView === "diagnosis" && (
-              <DiagnosisView
-                moduleName={diagnosisModule}
-                setModuleName={setDiagnosisModule}
-                records={visibleRecords}
+            {view === "diagnosis" && <Diagnosis records={records} settings={settings} module={diagnosisModule} setModule={setDiagnosisModule} onEdit={edit} />}
+            {view === "review" && <Review records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
+            {view === "ledger" && <Ledger records={ledger} query={ledgerQuery} module={ledgerModule} onQuery={setLedgerQuery} onModule={setLedgerModule} onEdit={edit} onDelete={softDelete} />}
+            {view === "settings" && (
+              <SettingsView
                 settings={settings}
-              />
-            )}
-            {activeView === "ledger" && (
-              <LedgerView
-                records={filteredLedger}
-                query={query}
-                setQuery={setQuery}
-                moduleName={ledgerModule}
-                setModuleName={setLedgerModule}
-                onEdit={editRecord}
-                onDelete={deleteRecord}
-                onExportCsv={exportCsv}
-              />
-            )}
-            {activeView === "account" && (
-              <AccountView
-                session={session}
-                email={email}
-                setEmail={setEmail}
-                otp={otp}
-                setOtp={setOtp}
-                authMessage={authMessage}
-                settings={settings}
-                setSettings={commitSettings}
-                syncStatus={syncStatus}
-                legacyCount={legacyCount}
-                onSendOtp={sendOtp}
-                onVerifyOtp={verifyOtp}
-                onSignOut={signOut}
-                onPull={() => session && pullRemote(session)}
-                onPush={pushRemote}
-                onMigrate={migrateLegacy}
-                onExportJson={exportJson}
-                onImportJson={importJson}
+                setSettings={updateSettings}
+                spaceCode={spaceCode}
+                setSpaceCode={(code) => {
+                  setSpaceCode(normalizeCode(code));
+                  setSyncState("syncing");
+                  window.setTimeout(() => void syncNow(), 0);
+                }}
+                syncState={syncState}
+                lastSync={lastSync}
+                onGenerate={() => setSpaceCode(generateCode())}
+                onSync={() => void syncNow()}
+                onClear={() => {
+                  setSpaceCode("");
+                  setSyncState("local");
+                }}
+                onExportJson={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 5, records: data.rows, settings }, null, 2), "application/json")}
+                onExportCsv={() => download(`xingce-ledger-${today()}.csv`, exportCsv(data.rows), "text/csv;charset=utf-8")}
+                onImport={importBackup}
               />
             )}
           </motion.section>
@@ -726,11 +354,12 @@ export function App() {
       </main>
 
       <nav className="mobile-nav">
-        <NavButton compact active={activeView === "overview"} icon={<LayoutDashboard />} label="总览" onClick={() => setActiveView("overview")} />
-        <NavButton compact active={activeView === "entry"} icon={<SquarePen />} label="录入" onClick={() => setActiveView("entry")} />
-        <NavButton compact active={activeView === "diagnosis"} icon={<Activity />} label="诊断" onClick={() => setActiveView("diagnosis")} />
-        <NavButton compact active={activeView === "ledger"} icon={<Table2 />} label="台账" onClick={() => setActiveView("ledger")} />
-        <NavButton compact active={activeView === "account"} icon={<UserRound />} label="账户" onClick={() => setActiveView("account")} />
+        {nav.map((item) => (
+          <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
+        ))}
       </nav>
 
       {toast && <div className="toast">{toast}</div>}
@@ -738,782 +367,347 @@ export function App() {
   );
 }
 
-function Overview({
-  stats,
-  trend,
-  moduleStats,
-  reasonStats,
-  records,
-  settings,
-  legacyCount,
-  onMigrate,
-  onQuickPick
-}: {
-  stats: ReturnType<typeof makeStats>;
-  trend: ReturnType<typeof makeTrend>;
-  moduleStats: ReturnType<typeof makeModuleStats>;
-  reasonStats: ReturnType<typeof makeReasonStats>;
-  records: TrainingRecord[];
-  settings: AppSettings;
-  legacyCount: number;
-  onMigrate: () => void;
-  onQuickPick: (pick: (typeof QUICK_PICKS)[number]) => void;
-}) {
+function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof dashboard>; settings: Settings; onRecord: () => void; onReview: () => void }) {
   return (
-    <div className="grid">
-      <section className="hero-panel">
+    <div className="stack">
+      <section className="hero">
         <div>
-          <p className="eyebrow">Today Focus</p>
-          <h2>{makeHeadline(stats)}</h2>
-          <p>用题量、正确率、配速和错因把复盘压缩到一屏里。新版会自动同步，不再手动上传拉取。</p>
+          <p>TODAY COMMAND</p>
+          <h2>{data.total ? "把训练变成可复盘的优势" : "从第一条记录开始建立优势"}</h2>
+          <span>今日 {data.todayTotal} 题，累计 {data.total} 题，当前正确率 {data.totalRate}%。</span>
+          <div className="hero-actions">
+            <button className="primary-btn" onClick={onRecord}><Plus /> 录入训练</button>
+            <button className="soft-btn" onClick={onReview}><ListChecks /> 处理复盘</button>
+          </div>
         </div>
-        <div className="hero-orbit">
-          <Gauge />
-          <strong>{stats.allRate}%</strong>
-          <span>全局正确率</span>
+        <div className="goal-card">
+          <span>今日目标</span>
+          <strong>{data.goalDone}%</strong>
+          <small>{data.todayTotal}/{settings.dailyGoal} 题</small>
+          <i style={{ width: `${data.goalDone}%` }} />
         </div>
       </section>
 
-      {legacyCount > 0 && (
-        <section className="notice">
-          <Database />
-          <div>
-            <strong>检测到 {legacyCount} 条旧版本机数据</strong>
-            <span>登录后建议迁移到新版账号同步。</span>
-          </div>
-          <button className="btn primary" onClick={onMigrate}>迁移旧数据</button>
-        </section>
-      )}
+      <div className="notice"><Sparkles /> {data.quote}</div>
 
       <section className="metric-grid">
-        <Metric label="今日刷题" value={stats.todayTotal} unit="题" icon={<CalendarClock />} />
-        <Metric label="今日正确率" value={`${stats.todayRate}%`} unit={`目标 ${settings.targetRate}%`} icon={<BadgeCheck />} />
-        <Metric label="近 7 天题量" value={stats.weekTotal} unit="题" icon={<BarChart3 />} />
-        <Metric label="连续训练" value={stats.streak} unit="天" icon={<Sparkles />} />
-        <Metric label="累计题量" value={stats.allTotal} unit="题" icon={<Database />} />
-        <Metric label="平均配速" value={`${stats.avgPace}s`} unit="每题" icon={<TimerReset />} />
+        <Metric label="今日题量" value={data.todayTotal} unit={`目标 ${settings.dailyGoal}`} icon={<Flame />} />
+        <Metric label="今日正确率" value={`${data.todayRate}%`} unit={`目标 ${settings.targetRate}%`} icon={<CheckCircle2 />} />
+        <Metric label="复盘队列" value={data.pending.length} unit="条待处理" icon={<ListChecks />} />
+        <Metric label="累计题量" value={data.total} unit="题" icon={<Gauge />} />
       </section>
 
-      <section className="split">
-        <Card title="训练趋势" action="14 天">
-          <ChartBox>
-            <LineChart data={trend}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="date" tickLine={false} axisLine={false} />
-              <YAxis yAxisId="left" tickLine={false} axisLine={false} />
-              <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tickLine={false} axisLine={false} />
-              <Tooltip />
-              <Line yAxisId="left" type="monotone" dataKey="total" stroke="#2563eb" strokeWidth={3} dot={false} name="题量" />
-              <Line yAxisId="right" type="monotone" dataKey="rate" stroke="#0f766e" strokeWidth={3} dot={false} name="正确率" />
-            </LineChart>
-          </ChartBox>
-        </Card>
-        <Card title="模块雷达" action="强弱项">
-          <ChartBox>
-            <RadarChart data={moduleStats}>
-              <PolarGrid />
-              <PolarAngleAxis dataKey="short" />
-              <Tooltip />
-              <RadarShape dataKey="rate" stroke="#4f46e5" fill="#4f46e5" fillOpacity={0.25} name="正确率" />
-            </RadarChart>
-          </ChartBox>
-        </Card>
-      </section>
-
-      <section className="split">
-        <Card title="快捷训练">
-          <div className="quick-grid">
-            {QUICK_PICKS.map((pick) => (
-              <button key={pick.name} className="quick-card" onClick={() => onQuickPick(pick)}>
-                <strong>{pick.name}</strong>
-                <span>{pick.duration} 分钟模板</span>
-              </button>
-            ))}
-          </div>
-        </Card>
-        <Card title="智能复盘建议" action="自动生成">
-          <div className="insight-list">
-            {makeInsights(records, moduleStats, reasonStats).map((item) => (
-              <div className="insight" key={item.title}>
-                <Radar />
-                <div>
-                  <strong>{item.title}</strong>
-                  <span>{item.text}</span>
-                </div>
+      <section className="grid-two">
+        <Panel title="14 天趋势">
+          <div className="trend">
+            {data.trend.map((item) => (
+              <div key={item.date} title={`${item.date} · ${item.total}题`}>
+                <i style={{ height: `${Math.max(4, Math.min(100, item.total))}%` }} />
+                <span>{item.date.slice(3)}</span>
               </div>
             ))}
           </div>
-        </Card>
-      </section>
-    </div>
-  );
-}
-
-function EntryView({
-  form,
-  setForm,
-  editingId,
-  timerMs,
-  timerRunning,
-  onTimer,
-  onTimerReset,
-  onSave,
-  onSaveNext,
-  onCancel,
-  onQuickPick
-}: {
-  form: EntryForm;
-  setForm: (form: EntryForm | ((prev: EntryForm) => EntryForm)) => void;
-  editingId: string | null;
-  timerMs: number;
-  timerRunning: boolean;
-  onTimer: () => void;
-  onTimerReset: () => void;
-  onSave: () => void;
-  onSaveNext: () => void;
-  onCancel: () => void;
-  onQuickPick: (pick: (typeof QUICK_PICKS)[number]) => void;
-}) {
-  const module = MODULES[form.module as keyof typeof MODULES];
-  return (
-    <div className="entry-layout">
-      <Card title={editingId ? "修改训练记录" : "快速录入"} action="本地秒存">
-        <div className="form-grid">
-          <Field label="日期">
-            <input value={form.date} type="date" onChange={(event) => setForm((p) => ({ ...p, date: event.target.value }))} />
-          </Field>
-          <Field label="模块">
-            <select
-              value={form.module}
-              onChange={(event) => {
-                const next = event.target.value;
-                setForm((p) => ({ ...p, module: next, subType: lastSubType(next) }));
-              }}
-            >
-              {MODULE_NAMES.map((name) => <option key={name}>{name}</option>)}
-            </select>
-          </Field>
-          <Field label="题型">
-            <select value={form.subType} onChange={(event) => setForm((p) => ({ ...p, subType: event.target.value }))}>
-              {module.subs.map((name) => <option key={name}>{name}</option>)}
-            </select>
-          </Field>
-          <Field label="总题">
-            <input value={form.total} inputMode="numeric" onChange={(event) => setForm((p) => ({ ...p, total: event.target.value }))} />
-          </Field>
-          <Field label="正确">
-            <input value={form.correct} inputMode="numeric" onChange={(event) => setForm((p) => ({ ...p, correct: event.target.value }))} />
-          </Field>
-          <Field label="耗时（分钟）">
-            <input value={form.duration} inputMode="decimal" onChange={(event) => setForm((p) => ({ ...p, duration: event.target.value }))} />
-          </Field>
-        </div>
-        <div className="reason-row">
-          {REASONS.map((reason) => (
-            <button
-              key={reason}
-              className={form.errorReason === reason ? "chip active" : "chip"}
-              onClick={() => setForm((p) => ({ ...p, errorReason: reason }))}
-            >
-              {reason}
-            </button>
-          ))}
-        </div>
-        <Field label="复盘笔记">
-          <textarea value={form.note} placeholder="比如：资料分析比重题二次定位慢；判断推理定义题漏条件。" onChange={(event) => setForm((p) => ({ ...p, note: event.target.value }))} />
-        </Field>
-        <div className="action-row">
-          <button className="btn primary" onClick={onSave}><Save />保存记录</button>
-          <button className="btn" onClick={onSaveNext}>保存并继续</button>
-          {editingId && <button className="btn ghost" onClick={onCancel}>取消修改</button>}
-        </div>
-      </Card>
-      <div className="side-stack">
-        <Card title="训练计时器">
-          <div className="timer-face">
-            <strong>{formatTimer(timerMs)}</strong>
-            <span>结束后自动填入耗时</span>
-          </div>
-          <div className="action-row">
-            <button className="btn primary" onClick={onTimer}>{timerRunning ? "暂停" : "开始"}</button>
-            <button className="btn" onClick={onTimerReset}><TimerReset />归零</button>
-          </div>
-        </Card>
-        <Card title="快捷模板">
-          <div className="quick-grid compact">
-            {QUICK_PICKS.map((pick) => (
-              <button key={pick.name} className="quick-card" onClick={() => onQuickPick(pick)}>
-                <strong>{pick.name}</strong>
-                <span>{pick.duration} min</span>
-              </button>
+        </Panel>
+        <Panel title="模块状态">
+          <div className="module-list">
+            {data.moduleStats.map((item) => (
+              <div key={item.id}>
+                <span style={{ color: item.accent }}>{item.short}</span>
+                <strong>{item.total ? `${item.rate}%` : "--"}</strong>
+                <i><b style={{ width: `${item.rate}%`, background: item.accent }} /></i>
+              </div>
             ))}
           </div>
-        </Card>
-      </div>
+        </Panel>
+      </section>
+
+      <section className="grid-two">
+        <Panel title="训练热力">
+          <div className="heatmap">
+            {data.heatmap.map((item) => <span key={item.date} data-level={item.level} title={`${item.date} · ${item.total}题`} />)}
+          </div>
+        </Panel>
+        <Panel title="下一步">
+          <ul className="advice">
+            <li>{data.pending.length ? `先复盘最近 ${Math.min(3, data.pending.length)} 条记录。` : "复盘队列清爽，可以追加一组混合训练。"}</li>
+            <li>{data.weak ? `${data.weak.short} 目前最需要关注。` : "先录入一组完整数据，系统会自动判断弱项。"}</li>
+            <li>{data.todayTotal < settings.dailyGoal ? `今日还差 ${Math.max(0, settings.dailyGoal - data.todayTotal)} 题。` : "今日目标已完成。"}</li>
+          </ul>
+        </Panel>
+      </section>
     </div>
   );
 }
 
-function DiagnosisView({
-  moduleName,
-  setModuleName,
-  records,
-  settings
-}: {
-  moduleName: string;
-  setModuleName: (value: string) => void;
-  records: TrainingRecord[];
-  settings: AppSettings;
+function RecordView({ form, setForm, currentModule, timer, timerOn, editing, onTimer, onResetTimer, onSave, onSaveContinue }: {
+  form: EntryForm;
+  setForm: (next: EntryForm) => void;
+  currentModule: (typeof MODULES)[number];
+  timer: number;
+  timerOn: boolean;
+  editing: boolean;
+  onTimer: () => void;
+  onResetTimer: () => void;
+  onSave: () => void;
+  onSaveContinue: () => void;
 }) {
-  const scoped = records.filter((record) => record.module === moduleName);
-  const subtypeStats = makeSubtypeStats(scoped);
-  const reasonStats = makeReasonStats(scoped);
+  const setModule = (module: ModuleName) => {
+    setForm({ ...form, module, subType: firstSubType(module), duration: suggestedMinutes(module, form.total) });
+  };
+  const setTotal = (total: string) => setForm({ ...form, total, duration: suggestedMinutes(form.module, total) });
   return (
-    <div className="grid">
-      <section className="toolbar-panel">
-        <div>
-          <p className="eyebrow">Module Lab</p>
-          <h2>{moduleName}</h2>
-        </div>
-        <select value={moduleName} onChange={(event) => setModuleName(event.target.value)}>
-          {MODULE_NAMES.map((name) => <option key={name}>{name}</option>)}
-        </select>
+    <div className="stack">
+      <section className="form-layout">
+        <Panel title={editing ? "编辑训练" : "录入训练"}>
+          <div className="form-grid">
+            <Field label="日期"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
+            <Field label="模块">
+              <select value={form.module} onChange={(e) => setModule(e.target.value as ModuleName)}>
+                {MODULES.map((item) => <option key={item.id}>{item.name}</option>)}
+              </select>
+            </Field>
+            <Field label="题型">
+              <select value={form.subType} onChange={(e) => setForm({ ...form, subType: e.target.value })}>
+                {currentModule.subTypes.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </Field>
+            <Field label="题量"><input inputMode="numeric" value={form.total} onChange={(e) => setTotal(e.target.value)} /></Field>
+            <Field label="正确数"><input inputMode="numeric" value={form.correct} onChange={(e) => setForm({ ...form, correct: e.target.value })} /></Field>
+            <Field label="用时">
+              <input inputMode="numeric" value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} />
+            </Field>
+            <Field label="主要错因">
+              <select value={form.errorReason} onChange={(e) => setForm({ ...form, errorReason: e.target.value })}>
+                {ERROR_REASONS.map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </Field>
+            <Field label="标签"><input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="可选，用空格分隔" /></Field>
+          </div>
+          <Field label="备注"><textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="这组题暴露了什么问题？" /></Field>
+          <div className="button-row">
+            <button className="primary-btn" onClick={onSave}><Save /> 保存</button>
+            <button className="soft-btn" onClick={onSaveContinue}><Plus /> 保存并继续</button>
+          </div>
+        </Panel>
+        <Panel title="计时">
+          <div className="timer">
+            <strong>{formatTimer(timer)}</strong>
+            <div className="button-row">
+              <button className="primary-btn" onClick={onTimer}>{timerOn ? "暂停" : "开始"}</button>
+              <button className="soft-btn" onClick={onResetTimer}><TimerReset /> 重置</button>
+            </div>
+          </div>
+        </Panel>
       </section>
-      <section className="split">
-        <Card title="题型表现">
-          <ChartBox>
-            <BarChart data={subtypeStats}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" tickLine={false} axisLine={false} />
-              <YAxis domain={[0, 100]} tickLine={false} axisLine={false} />
-              <Tooltip />
-              <Bar dataKey="rate" radius={[8, 8, 0, 0]} name="正确率">
-                {subtypeStats.map((item) => <Cell key={item.name} fill={item.rate >= settings.targetRate ? "#0f766e" : "#be123c"} />)}
-              </Bar>
-            </BarChart>
-          </ChartBox>
-        </Card>
-        <Card title="错因结构">
-          <ChartBox>
-            <PieChart>
-              <Tooltip />
-              <Pie data={reasonStats} dataKey="value" nameKey="name" innerRadius={58} outerRadius={96} paddingAngle={4}>
-                {reasonStats.map((item, index) => <Cell key={item.name} fill={["#2563eb", "#0f766e", "#b45309", "#be123c", "#4f46e5", "#64748b"][index % 6]} />)}
-              </Pie>
-            </PieChart>
-          </ChartBox>
-        </Card>
-      </section>
-      <Card title="近期记录">
-        <RecordList records={scoped.slice(0, 6)} />
-      </Card>
     </div>
   );
 }
 
-function LedgerView({
-  records,
-  query,
-  setQuery,
-  moduleName,
-  setModuleName,
-  onEdit,
-  onDelete,
-  onExportCsv
-}: {
+function Diagnosis({ records, settings, module, setModule, onEdit }: { records: TrainingRecord[]; settings: Settings; module: ModuleName; setModule: (module: ModuleName) => void; onEdit: (record: TrainingRecord) => void }) {
+  const detail = moduleDetail(records, module, settings);
+  const modules = MODULES.filter((item) => item.name !== "全模块测试");
+  return (
+    <div className="stack">
+      <div className="module-tabs">
+        {modules.map((item) => (
+          <button key={item.id} className={module === item.name ? "active" : ""} onClick={() => setModule(item.name)}>
+            {item.short}
+            <span>{moduleDetail(records, item.name, settings).total ? `${moduleDetail(records, item.name, settings).rate}%` : "--"}</span>
+          </button>
+        ))}
+      </div>
+      <section className="grid-two">
+        <Panel title={`${module}概况`}>
+          <div className="diagnosis-head" style={{ "--accent": accent(module) } as React.CSSProperties}>
+            <strong>{detail.total ? `${detail.rate}%` : "待建立"}</strong>
+            <span>{detail.total} 题 · {Math.max(0, detail.total - detail.correct)} 错 · {detail.pending} 条复盘</span>
+          </div>
+          <ul className="advice">{detail.actions.map((item) => <li key={item}>{item}</li>)}</ul>
+        </Panel>
+        <Panel title="错因分布">
+          <Bars rows={detail.reasons.map((item) => ({ name: item.name, value: item.value }))} empty="暂无错因数据" />
+        </Panel>
+      </section>
+      <section className="grid-two">
+        <Panel title="题型弱项">
+          <Bars rows={detail.subTypes.map((item) => ({ name: item.name, value: 100 - item.rate, hint: `${item.rate}% · 错 ${item.wrong}` }))} empty="暂无题型数据" />
+        </Panel>
+        <Panel title="最近记录">
+          <div className="record-list compact">
+            {detail.rows.slice(0, 5).map((item) => <RecordCard key={item.id} record={item} onEdit={onEdit} />)}
+            {!detail.rows.length && <Empty text="还没有这个模块的记录。" />}
+          </div>
+        </Panel>
+      </section>
+    </div>
+  );
+}
+
+function Review({ records, onDone, onEdit, onDelete }: { records: TrainingRecord[]; onDone: (record: TrainingRecord) => void; onEdit: (record: TrainingRecord) => void; onDelete: (record: TrainingRecord) => void }) {
+  return (
+    <Panel title="复盘队列">
+      <div className="record-list">
+        {records.map((item) => <RecordCard key={item.id} record={item} onEdit={onEdit} onDelete={onDelete} action={<button className="primary-btn" onClick={() => onDone(item)}><CheckCircle2 /> 完成</button>} />)}
+        {!records.length && <Empty text="当前没有待复盘记录。" />}
+      </div>
+    </Panel>
+  );
+}
+
+function Ledger({ records, query, module, onQuery, onModule, onEdit, onDelete }: {
   records: TrainingRecord[];
   query: string;
-  setQuery: (value: string) => void;
-  moduleName: string;
-  setModuleName: (value: string) => void;
+  module: ModuleName | "全部";
+  onQuery: (value: string) => void;
+  onModule: (value: ModuleName | "全部") => void;
   onEdit: (record: TrainingRecord) => void;
   onDelete: (record: TrainingRecord) => void;
-  onExportCsv: () => void;
 }) {
   return (
-    <div className="grid">
-      <section className="toolbar-panel">
-        <div className="search-box">
+    <div className="stack">
+      <section className="toolbar">
+        <div className="search">
           <Search />
-          <input value={query} placeholder="搜索模块、题型、错因、笔记" onChange={(event) => setQuery(event.target.value)} />
+          <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="搜索日期、模块、错因、标签、备注" />
         </div>
-        <select value={moduleName} onChange={(event) => setModuleName(event.target.value)}>
+        <select value={module} onChange={(e) => onModule(e.target.value as ModuleName | "全部")}>
           <option>全部</option>
-          {MODULE_NAMES.map((name) => <option key={name}>{name}</option>)}
+          {MODULES.map((item) => <option key={item.id}>{item.name}</option>)}
         </select>
-        <button className="btn" onClick={onExportCsv}><Download />导出 CSV</button>
       </section>
-      <Card title={`训练台账 · ${records.length} 条`}>
+      <Panel title="训练台账">
         <div className="table-wrap">
           <table>
-            <thead>
-              <tr>
-                <th>日期</th>
-                <th>模块</th>
-                <th>题型</th>
-                <th>正确率</th>
-                <th>耗时</th>
-                <th>错因</th>
-                <th>笔记</th>
-                <th>操作</th>
-              </tr>
-            </thead>
+            <thead><tr><th>日期</th><th>模块</th><th>题型</th><th>正确率</th><th>节奏</th><th>错因</th><th>标签</th><th>操作</th></tr></thead>
             <tbody>
-              {records.map((record) => (
-                <tr key={record.id}>
-                  <td>{record.date}</td>
-                  <td>{MODULES[record.module as keyof typeof MODULES]?.short || record.module}</td>
-                  <td>{record.subType}</td>
-                  <td><span className={rateClass(record)}>{rate(record.correct, record.total)}%</span></td>
-                  <td>{record.duration} 分</td>
-                  <td>{record.errorReason}</td>
-                  <td className="note-cell">{record.note || "—"}</td>
-                  <td>
-                    <button className="text-btn" onClick={() => onEdit(record)}>编辑</button>
-                    <button className="text-btn danger" onClick={() => onDelete(record)}>删除</button>
-                  </td>
+              {records.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.date}</td>
+                  <td>{item.module}</td>
+                  <td>{item.subType}</td>
+                  <td><strong>{percent(item.correct, item.total)}%</strong><small>{item.correct}/{item.total}</small></td>
+                  <td>{paceLabel(item)}</td>
+                  <td>{item.errorReason}</td>
+                  <td>{item.tags.length ? item.tags.join(" / ") : "--"}</td>
+                  <td><button className="icon-btn" onClick={() => onEdit(item)}><Edit3 /></button><button className="icon-btn danger" onClick={() => onDelete(item)}><Trash2 /></button></td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {!records.length && <Empty text="没有符合条件的记录。" />}
         </div>
-      </Card>
+      </Panel>
     </div>
   );
 }
 
-function AccountView({
-  session,
-  email,
-  setEmail,
-  otp,
-  setOtp,
-  authMessage,
-  settings,
-  setSettings,
-  syncStatus,
-  legacyCount,
-  onSendOtp,
-  onVerifyOtp,
-  onSignOut,
-  onPull,
-  onPush,
-  onMigrate,
-  onExportJson,
-  onImportJson
-}: {
-  session: Session | null;
-  email: string;
-  setEmail: (value: string) => void;
-  otp: string;
-  setOtp: (value: string) => void;
-  authMessage: string;
-  settings: AppSettings;
-  setSettings: (settings: AppSettings) => void;
-  syncStatus: SyncStatus;
-  legacyCount: number;
-  onSendOtp: (event: FormEvent) => void;
-  onVerifyOtp: (event: FormEvent) => void;
-  onSignOut: () => void;
-  onPull: () => void;
-  onPush: () => void;
-  onMigrate: () => void;
+function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncState, lastSync, onGenerate, onSync, onClear, onExportJson, onExportCsv, onImport }: {
+  settings: Settings;
+  setSettings: (settings: Settings) => void;
+  spaceCode: string;
+  setSpaceCode: (code: string) => void;
+  syncState: SyncState;
+  lastSync: string;
+  onGenerate: () => void;
+  onSync: () => void;
+  onClear: () => void;
   onExportJson: () => void;
-  onImportJson: (file: File | undefined) => void;
+  onExportCsv: () => void;
+  onImport: (file?: File) => void;
 }) {
+  const [draft, setDraft] = useState(spaceCode);
+  useEffect(() => setDraft(spaceCode), [spaceCode]);
   return (
-    <div className="account-grid">
-      <Card title="账号同步" action={syncLabel(syncStatus)}>
-        {session ? (
-          <div className="account-card">
-            <CheckCircle2 />
-            <div>
-              <strong>{session.user.email}</strong>
-              <span>已登录。新增、修改、删除都会自动同步。</span>
-            </div>
-            <div className="action-row">
-              <button className="btn" onClick={onPull}><RefreshCw />立即拉取</button>
-              <button className="btn" onClick={onPush}><Cloud />立即上传</button>
-              <button className="btn ghost" onClick={onSignOut}><LogOut />退出</button>
-            </div>
+    <div className="stack">
+      <section className="grid-two">
+        <Panel title="目标">
+          <div className="form-grid">
+            <Field label="考试日期"><input type="date" value={settings.examDate} onChange={(e) => setSettings({ ...settings, examDate: e.target.value })} /></Field>
+            <Field label="每日目标"><input inputMode="numeric" value={settings.dailyGoal} onChange={(e) => setSettings({ ...settings, dailyGoal: Number(e.target.value) || DEFAULT_SETTINGS.dailyGoal })} /></Field>
+            <Field label="目标正确率"><input inputMode="numeric" value={settings.targetRate} onChange={(e) => setSettings({ ...settings, targetRate: Number(e.target.value) || DEFAULT_SETTINGS.targetRate })} /></Field>
           </div>
-        ) : (
-          <div className="login-grid">
-            <form onSubmit={onSendOtp}>
-              <Field label="邮箱">
-                <input type="email" value={email} placeholder="your@email.com" onChange={(event) => setEmail(event.target.value)} required />
-              </Field>
-              <button className="btn primary"><ShieldCheck />发送验证码</button>
-            </form>
-            <form onSubmit={onVerifyOtp}>
-              <Field label="邮箱验证码">
-                <input value={otp} placeholder="6 位验证码" onChange={(event) => setOtp(event.target.value)} />
-              </Field>
-              <button className="btn">验证登录</button>
-            </form>
-            {authMessage && <p className="muted">{authMessage}</p>}
+        </Panel>
+        <Panel title="空间码">
+          <div className="sync-line"><SyncIcon state={syncState} /><strong>{syncLabel(syncState)}</strong><span>{lastSync || "自动保存与拉取"}</span></div>
+          <div className="space-row">
+            <input value={draft} onChange={(e) => setDraft(normalizeCode(e.target.value))} placeholder="输入或生成空间码" />
+            <button className="primary-btn" onClick={() => setSpaceCode(draft)}><Save /> 保存</button>
           </div>
-        )}
-      </Card>
-
-      <Card title="目标设置">
-        <div className="form-grid compact-form">
-          <Field label="考试日期">
-            <input
-              type="date"
-              value={settings.examDate}
-              onChange={(event) => setSettings({ ...settings, examDate: event.target.value, updatedAt: new Date().toISOString() })}
-            />
-          </Field>
-          <Field label="每日目标题量">
-            <input
-              inputMode="numeric"
-              value={settings.dailyGoal}
-              onChange={(event) => setSettings({ ...settings, dailyGoal: Math.max(1, Number(event.target.value) || 80), updatedAt: new Date().toISOString() })}
-            />
-          </Field>
-          <Field label="目标正确率">
-            <input
-              inputMode="numeric"
-              value={settings.targetRate}
-              onChange={(event) => setSettings({ ...settings, targetRate: Math.min(100, Math.max(1, Number(event.target.value) || 80)), updatedAt: new Date().toISOString() })}
-            />
-          </Field>
+          <div className="button-row">
+            <button className="soft-btn" onClick={onGenerate}><Wand2 /> 生成</button>
+            <button className="soft-btn" onClick={onSync} disabled={!spaceCode}><RefreshCw /> 同步</button>
+            <button className="soft-btn danger-text" onClick={onClear} disabled={!spaceCode}><CloudOff /> 清除</button>
+          </div>
+        </Panel>
+      </section>
+      <Panel title="备份">
+        <div className="button-row">
+          <button className="soft-btn" onClick={onExportJson}><Download /> JSON</button>
+          <button className="soft-btn" onClick={onExportCsv}><Download /> CSV</button>
+          <label className="soft-btn file-btn"><Upload /> 导入<input type="file" accept="application/json,.json" onChange={(e) => onImport(e.target.files?.[0])} /></label>
         </div>
-      </Card>
-
-      <Card title="备份与迁移">
-        <div className="action-row">
-          <button className="btn" onClick={onExportJson}><Download />导出 JSON</button>
-          <label className="btn file-btn">
-            <Upload />导入 JSON
-            <input type="file" accept="application/json,.json" onChange={(event) => onImportJson(event.target.files?.[0])} />
-          </label>
-          {legacyCount > 0 && <button className="btn primary" onClick={onMigrate}>迁移 {legacyCount} 条旧数据</button>}
-        </div>
-        <p className="muted">离线备份只做兜底；日常跨设备使用账号自动同步。</p>
-      </Card>
+      </Panel>
     </div>
   );
 }
 
-function Card({ title, action, children }: { title: string; action?: string; children: React.ReactNode }) {
-  return (
-    <section className="card">
-      <div className="card-head">
-        <h3>{title}</h3>
-        {action && <span>{action}</span>}
-      </div>
-      {children}
-    </section>
-  );
+function Metric({ label, value, unit, icon }: { label: string; value: ReactNode; unit: string; icon: ReactNode }) {
+  return <motion.div className="metric" whileHover={{ y: -3 }}><div><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>{icon}</motion.div>;
 }
 
-function ChartBox({ children }: { children: React.ReactElement }) {
-  return <div className="chart-box"><ResponsiveContainer>{children}</ResponsiveContainer></div>;
+function Panel({ title, children }: { title: string; children: ReactNode }) {
+  return <section className="panel"><div className="panel-head"><h3>{title}</h3></div>{children}</section>;
 }
 
-function Metric({ label, value, unit, icon }: { label: string; value: string | number; unit: string; icon: React.ReactNode }) {
-  return (
-    <motion.div className="metric" whileHover={{ y: -4 }}>
-      <div className="metric-top"><span>{label}</span>{icon}</div>
-      <strong>{value}</strong>
-      <small>{unit}</small>
-    </motion.div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="field"><span>{label}</span>{children}</label>;
 }
 
-function NavButton({ active, icon, label, compact, onClick }: { active: boolean; icon: React.ReactNode; label: string; compact?: boolean; onClick: () => void }) {
+function RecordCard({ record, onEdit, onDelete, action }: { record: TrainingRecord; onEdit: (record: TrainingRecord) => void; onDelete?: (record: TrainingRecord) => void; action?: ReactNode }) {
+  const wrong = Math.max(0, record.total - record.correct);
   return (
-    <button className={`${compact ? "mobile-item" : "nav-item"} ${active ? "active" : ""}`} onClick={onClick}>
-      {icon}
-      <span>{label}</span>
-    </button>
+    <article className="record-card">
+      <i style={{ background: accent(record.module) }} />
+      <div>
+        <strong>{record.module} · {record.subType}</strong>
+        <span>{record.date} · {record.correct}/{record.total} · 错 {wrong} · {record.errorReason}</span>
+        {record.tags.length > 0 && <small>{record.tags.join(" / ")}</small>}
+      </div>
+      <b>{percent(record.correct, record.total)}%</b>
+      <div className="card-actions">
+        <button className="icon-btn" onClick={() => onEdit(record)}><Edit3 /></button>
+        {onDelete && <button className="icon-btn danger" onClick={() => onDelete(record)}><Trash2 /></button>}
+        {action}
+      </div>
+    </article>
   );
 }
 
-function SyncIcon({ status }: { status: SyncStatus }) {
-  if (status === "offline") return <CloudOff />;
-  if (status === "syncing") return <RefreshCw className="spin" />;
-  if (status === "error") return <CloudOff />;
+function Bars({ rows, empty }: { rows: Array<{ name: string; value: number; hint?: string }>; empty: string }) {
+  const max = Math.max(1, ...rows.map((item) => item.value));
+  if (!rows.length) return <Empty text={empty} />;
+  return <div className="bars">{rows.map((item) => <div key={item.name}><span>{item.name}</span><i><b style={{ width: `${Math.max(6, (item.value / max) * 100)}%` }} /></i><strong>{item.hint || item.value}</strong></div>)}</div>;
+}
+
+function Empty({ text }: { text: string }) {
+  return <div className="empty"><Sparkles /> {text}</div>;
+}
+
+function SyncIcon({ state }: { state: SyncState }) {
+  if (state === "syncing") return <RefreshCw className="spin" />;
+  if (state === "synced") return <CheckCircle2 />;
+  if (state === "offline" || state === "error") return <CloudOff />;
   return <Cloud />;
 }
 
-function RecordList({ records }: { records: TrainingRecord[] }) {
-  if (!records.length) return <p className="muted">暂无记录。</p>;
-  return (
-    <div className="record-list">
-      {records.map((record) => (
-        <div className="record-card" key={record.id}>
-          <strong>{record.date} · {MODULES[record.module as keyof typeof MODULES]?.short || record.module}</strong>
-          <span>{record.subType} · {record.correct}/{record.total} · {record.duration} 分钟</span>
-        </div>
-      ))}
-    </div>
-  );
+function title(view: ViewId) {
+  return { today: "训练总览", record: "训练录入", diagnosis: "专项诊断", review: "错题复盘", ledger: "训练台账", settings: "同步设置" }[view];
 }
 
-function today(date = new Date()) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+function syncLabel(state: SyncState) {
+  return { local: "本机保存", syncing: "同步中", synced: "已同步", offline: "离线待同步", error: "同步异常" }[state];
 }
 
-function daysAgo(offset: number) {
-  const date = new Date();
-  date.setDate(date.getDate() - offset);
-  return today(date);
-}
-
-function normalizeRecord(input: Record<string, unknown>): TrainingRecord | null {
-  const total = Number(input.total);
-  const correct = Number(input.correct);
-  const duration = Number(input.duration);
-  const date = String(input.date || "");
-  if (!date || !Number.isFinite(total) || !Number.isFinite(correct) || !Number.isFinite(duration)) return null;
-  if (total <= 0 || correct < 0 || correct > total || duration < 0) return null;
-  const now = new Date().toISOString();
-  return {
-    id: String(input.id || crypto.randomUUID()),
-    date,
-    module: normalizeModule(String(input.module || MODULE_NAMES[0])),
-    subType: String(input.subType || "综合卷/混刷"),
-    total: Math.round(total),
-    correct: Math.round(correct),
-    duration: Math.round(duration * 10) / 10,
-    errorReason: String(input.errorReason || "无"),
-    note: String(input.note || ""),
-    createdAt: String(input.createdAt || now),
-    updatedAt: String(input.updatedAt || now),
-    deletedAt: input.deletedAt ? String(input.deletedAt) : null
-  };
-}
-
-function normalizeRecords(input: TrainingRecord[]) {
-  return input.map((record) => normalizeRecord(record as unknown as Record<string, unknown>)).filter(Boolean) as TrainingRecord[];
-}
-
-function normalizeModule(value: string) {
-  if (MODULE_NAMES.includes(value)) return value;
-  if (value.includes("言语")) return "言语理解与表达";
-  if (value.includes("判断")) return "判断推理";
-  if (value.includes("资料")) return "资料分析";
-  if (value.includes("数量")) return "数量关系";
-  if (value.includes("常识") || value.includes("政治")) return "常识判断";
-  return MODULE_NAMES[0];
-}
-
-function lastSubType(moduleName: string) {
-  const subs = MODULES[moduleName as keyof typeof MODULES]?.subs || MODULES["言语理解与表达"].subs;
-  return subs[subs.length - 1] || "综合卷/混刷";
-}
-
-function mergeRecords(localRows: TrainingRecord[], remoteRows: TrainingRecord[]) {
-  const map = new Map<string, TrainingRecord>();
-  [...localRows, ...remoteRows].forEach((record) => {
-    const current = map.get(record.id);
-    if (!current || new Date(record.updatedAt).getTime() >= new Date(current.updatedAt).getTime()) {
-      map.set(record.id, record);
-    }
-  });
-  return Array.from(map.values());
-}
-
-function toRemoteRecord(record: TrainingRecord, userId: string): RemoteRecord {
-  return {
-    id: record.id,
-    user_id: userId,
-    date: record.date,
-    module: record.module,
-    sub_type: record.subType,
-    total: record.total,
-    correct: record.correct,
-    duration: record.duration,
-    error_reason: record.errorReason,
-    note: record.note,
-    created_at: record.createdAt,
-    updated_at: record.updatedAt,
-    deleted_at: record.deletedAt || null
-  };
-}
-
-function fromRemoteRecord(row: RemoteRecord): TrainingRecord {
-  return {
-    id: row.id,
-    date: row.date,
-    module: row.module,
-    subType: row.sub_type,
-    total: row.total,
-    correct: row.correct,
-    duration: Number(row.duration),
-    errorReason: row.error_reason,
-    note: row.note,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    deletedAt: row.deleted_at
-  };
-}
-
-function makeStats(records: TrainingRecord[], settings: AppSettings) {
-  const todayRows = records.filter((record) => record.date === today());
-  const weekRows = records.filter((record) => record.date >= daysAgo(6));
-  const todayTotal = sum(todayRows, "total");
-  const allTotal = sum(records, "total");
-  const allCorrect = sum(records, "correct");
-  const allDuration = sum(records, "duration");
-  return {
-    todayTotal,
-    todayRate: todayTotal ? Math.round((sum(todayRows, "correct") / todayTotal) * 100) : 0,
-    weekTotal: sum(weekRows, "total"),
-    allTotal,
-    allRate: allTotal ? Math.round((allCorrect / allTotal) * 100) : 0,
-    avgPace: allTotal ? Math.round((allDuration * 60) / allTotal) : 0,
-    streak: streak(records),
-    goalGap: Math.max(0, settings.dailyGoal - todayTotal)
-  };
-}
-
-function makeTrend(records: TrainingRecord[], days: number) {
-  return Array.from({ length: days }, (_, index) => {
-    const date = daysAgo(days - index - 1);
-    const rows = records.filter((record) => record.date === date);
-    const total = sum(rows, "total");
-    return {
-      date: date.slice(5),
-      total,
-      rate: total ? Math.round((sum(rows, "correct") / total) * 100) : 0
-    };
-  });
-}
-
-function makeModuleStats(records: TrainingRecord[]) {
-  return MODULE_NAMES.map((name) => {
-    const rows = records.filter((record) => record.module === name);
-    const total = sum(rows, "total");
-    return {
-      name,
-      short: MODULES[name as keyof typeof MODULES].short,
-      total,
-      rate: total ? Math.round((sum(rows, "correct") / total) * 100) : 0
-    };
-  });
-}
-
-function makeSubtypeStats(records: TrainingRecord[]) {
-  const map = new Map<string, TrainingRecord[]>();
-  records.forEach((record) => map.set(record.subType, [...(map.get(record.subType) || []), record]));
-  return Array.from(map.entries()).map(([name, rows]) => {
-    const total = sum(rows, "total");
-    return { name, total, rate: total ? Math.round((sum(rows, "correct") / total) * 100) : 0 };
-  });
-}
-
-function makeReasonStats(records: TrainingRecord[]) {
-  const map = new Map<string, number>();
-  records.filter((record) => record.errorReason !== "无").forEach((record) => map.set(record.errorReason, (map.get(record.errorReason) || 0) + 1));
-  return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
-}
-
-function makeInsights(records: TrainingRecord[], modules: ReturnType<typeof makeModuleStats>, reasons: ReturnType<typeof makeReasonStats>) {
-  if (!records.length) return [{ title: "先录入第一组训练", text: "完成一次保存后，系统会自动生成趋势、弱项和错因建议。" }];
-  const weakest = modules.filter((item) => item.total > 0).sort((a, b) => a.rate - b.rate)[0];
-  const topReason = reasons.sort((a, b) => b.value - a.value)[0];
-  return [
-    weakest ? { title: `优先补强：${weakest.short}`, text: `当前正确率 ${weakest.rate}%，建议连续 3 天做小题组复盘。` } : { title: "模块数据不足", text: "每个模块至少录入一次后，雷达图会更准确。" },
-    topReason ? { title: `主要错因：${topReason.name}`, text: `近阶段出现 ${topReason.value} 次，建议在笔记中记录触发条件。` } : { title: "错因结构良好", text: "当前没有明显错因聚集，继续保持复盘颗粒度。" },
-    { title: "同步已自动化", text: "登录后新增、编辑、删除都会后台保存到云端。" }
-  ];
-}
-
-function makeHeadline(stats: ReturnType<typeof makeStats>) {
-  if (!stats.allTotal) return "从第一条训练记录开始，建立你的行测数据资产";
-  if (stats.goalGap === 0) return "今日目标已达成，适合做错因复盘";
-  return `今天还差 ${stats.goalGap} 题，完成后趋势会更稳`;
-}
-
-function rate(correct: number, total: number) {
-  return total ? Math.round((correct / total) * 100) : 0;
-}
-
-function pace(record: TrainingRecord) {
-  return record.total ? Math.round((record.duration * 60) / record.total) : 0;
-}
-
-function rateClass(record: TrainingRecord) {
-  const value = rate(record.correct, record.total);
-  if (value >= 85) return "rate good";
-  if (value >= 70) return "rate warn";
-  return "rate bad";
-}
-
-function sum(records: TrainingRecord[], key: "total" | "correct" | "duration") {
-  return records.reduce((acc, record) => acc + Number(record[key] || 0), 0);
-}
-
-function streak(records: TrainingRecord[]) {
-  const set = new Set(records.map((record) => record.date));
-  let count = 0;
-  const date = new Date();
-  while (set.has(today(date))) {
-    count += 1;
-    date.setDate(date.getDate() - 1);
-  }
-  return count;
-}
-
-function viewTitle(view: View) {
-  return { overview: "训练驾驶舱", entry: "快速录入", diagnosis: "专项诊断", ledger: "训练台账", account: "账户与同步" }[view];
-}
-
-function syncLabel(status: SyncStatus) {
-  return { local: "本机保存", syncing: "自动同步中", synced: "已同步", offline: "离线待同步", error: "同步异常" }[status];
-}
-
-function formatTimer(ms: number) {
-  const seconds = Math.floor(ms / 1000);
-  const h = String(Math.floor(seconds / 3600)).padStart(2, "0");
-  const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
-  const s = String(seconds % 60).padStart(2, "0");
-  return `${h}:${m}:${s}`;
-}
-
-function loadLegacyRecords() {
-  const parsed = safeParse(localStorage.getItem("xingce_v20_records"));
-  if (Array.isArray(parsed)) return parsed;
-  if (Array.isArray(parsed?.records)) return parsed.records;
-  return [];
-}
-
-function safeParse(text: string | null) {
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function download(filename: string, content: string, type: string) {
-  const url = URL.createObjectURL(new Blob([content], { type }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function csvCell(value: unknown) {
-  const text = String(value ?? "");
-  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+function formatTimer(seconds: number) {
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
