@@ -103,6 +103,7 @@ svg { width: 20px; height: 20px; stroke-width: 2.2; flex: 0 0 auto; }
 .topbar h1 { margin: 0; font-size: 44px; line-height: 1.04; letter-spacing: 0; }
 .top-actions, .button-row, .hero-actions, .card-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .page, .stack { display: grid; gap: 20px; min-width: 0; }
+.page { will-change: opacity, transform, filter; }
 .side-stack { display: grid; gap: 20px; align-self: start; }
 
 .primary-btn, .soft-btn, .icon-btn, .mini-btn {
@@ -161,6 +162,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
   background: var(--panel);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+}
+.panel, .metric, .record-card, .ledger-card {
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.panel:hover, .record-card:hover, .ledger-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--blue) 26%, var(--line));
+  box-shadow: 0 22px 54px rgba(15, 23, 42, 0.11);
 }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .metric { min-height: 132px; padding: 20px; border-radius: 18px; display: flex; justify-content: space-between; gap: 14px; }
@@ -250,6 +259,22 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .module-tabs button.active { color: #fff; border-color: transparent; background: linear-gradient(135deg, var(--blue), var(--teal)); }
 .module-tabs button.active span { color: rgba(255, 255, 255, 0.82); }
 .diagnosis-toolbar { grid-template-columns: minmax(0, 1fr) 180px; }
+.diagnosis-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.diagnosis-summary div {
+  min-height: 106px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--blue) 8%, transparent), transparent 58%),
+    var(--panel);
+  box-shadow: var(--soft-shadow);
+  display: grid;
+  align-content: center;
+  gap: 7px;
+}
+.diagnosis-summary span, .diagnosis-summary small { color: var(--muted); font-weight: 850; }
+.diagnosis-summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 28px; line-height: 1.05; letter-spacing: 0; }
 .bars { display: grid; gap: 14px; }
 .bars div { display: grid; grid-template-columns: 96px minmax(0, 1fr) 56px; align-items: center; gap: 12px; }
 .bars strong { color: var(--muted); text-align: right; }
@@ -330,6 +355,7 @@ td:last-child { white-space: nowrap; }
   .topbar h1 { font-size: 36px; }
   .top-actions .soft-btn { display: none; }
   .hero, .grid-two, .form-layout, .toolbar, .diagnosis-toolbar, .ledger-toolbar, .side-stack { grid-template-columns: 1fr; }
+  .diagnosis-summary { grid-template-columns: 1fr; }
   .goal-card { min-height: 166px; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .module-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -359,4 +385,13 @@ td:last-child { white-space: nowrap; }
   .ledger-stats { display: grid; grid-template-columns: auto 1fr auto; align-items: end; gap: 10px; }
   .ledger-stats b { font-size: 28px; letter-spacing: 0; }
   .chart-box { height: 238px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

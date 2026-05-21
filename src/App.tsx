@@ -67,6 +67,7 @@ import {
   loadState,
   markReviewedRecord,
   moduleDetail,
+  moduleSubTypes,
   normalizeCode,
   normalizeRecords,
   normalizeSettings,
@@ -120,7 +121,7 @@ export function App() {
   const [ledgerSort, setLedgerSort] = useState("date-desc");
   const [diagnosisModule, setDiagnosisModule] = useState<ModuleName>("言语理解与表达");
   const [diagnosisSub, setDiagnosisSub] = useState("全部题型");
-  const [diagnosisRange, setDiagnosisRange] = useState("30");
+  const [diagnosisRange, setDiagnosisRange] = useState("全部");
   const recordsRef = useRef(records);
   const settingsRef = useRef(settings);
   const codeRef = useRef(spaceCode);
@@ -414,7 +415,14 @@ export function App() {
         </header>
 
         <AnimatePresence mode="wait">
-          <motion.section key={view} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }} className="page">
+          <motion.section
+            key={view}
+            initial={{ opacity: 0, y: 8, filter: "blur(3px)" }}
+            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+            exit={{ opacity: 0, y: -6, filter: "blur(2px)" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34, mass: 0.7 }}
+            className="page"
+          >
             {view === "today" && <Today data={data} settings={settings} onRecord={() => setView("record")} onReview={() => setView("review")} />}
             {view === "record" && (
               <RecordView
@@ -548,7 +556,7 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
       <section className="metric-grid">
         <Metric label="今日题量" value={data.todayTotal} unit={`目标 ${settings.dailyGoal} 题`} icon={<Flame />} />
         <Metric label="今日正确率" value={`${data.todayRate}%`} unit={`目标 ${settings.targetRate}%`} icon={<Target />} />
-        <Metric label="平均配速" value={data.avgPace ? `${data.avgPace}s` : "--"} unit="秒/题" icon={<Gauge />} />
+        <Metric label="平均配速" value={data.avgPace || "--"} unit="秒/题" icon={<Gauge />} />
         <Metric label="复盘队列" value={data.pending.length} unit="条待处理" icon={<ListChecks />} />
       </section>
 
@@ -738,12 +746,14 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
   const modules = MODULES.filter((item) => item.name !== "全模块测试");
   const detail = moduleDetail(records, module, settings, subType, range);
   const moduleAll = moduleDetail(records, module, settings, "全部题型", "全部");
-  const emptyText = moduleAll.total ? "当前时间范围暂无记录，可切换近 30 天、近 90 天或全部。" : "当前模块暂无记录。";
+  const allSubTypes = moduleSubTypes(records, module);
+  const weakest = moduleAll.subTypes[0];
+  const emptyText = moduleAll.total ? "当前时间范围暂无记录，模块全量摘要仍会保留在上方。" : "当前模块暂无记录。";
   return (
     <div className="stack">
       <div className="module-tabs">
         {modules.map((item) => {
-          const quick = moduleDetail(records, item.name, settings);
+          const quick = moduleDetail(records, item.name, settings, "全部题型", "全部");
           return (
             <button key={item.id} className={module === item.name ? "active" : ""} onClick={() => setModule(item.name)}>
               {item.short}
@@ -756,7 +766,7 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
       <section className="toolbar diagnosis-toolbar">
         <select value={subType} onChange={(event) => setSubType(event.target.value)}>
           <option>全部题型</option>
-          {subTypeOptions(module).map((item) => <option key={item}>{item}</option>)}
+          {allSubTypes.map((item) => <option key={item}>{item}</option>)}
         </select>
         <select value={range} onChange={(event) => setRange(event.target.value)}>
           <option value="7">近 7 天</option>
@@ -767,10 +777,28 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
         </select>
       </section>
 
+      <section className="diagnosis-summary">
+        <div>
+          <span>模块总样本</span>
+          <strong>{moduleAll.total}</strong>
+          <small>{moduleAll.total ? `${moduleAll.rate}% · ${moduleAll.pace ? `${moduleAll.pace}s/题` : "--"}` : "暂无记录"}</small>
+        </div>
+        <div>
+          <span>当前筛选</span>
+          <strong>{detail.total}</strong>
+          <small>{range === "全部" ? "全部时间" : `近 ${range} 天`} · {subType}</small>
+        </div>
+        <div>
+          <span>优先小项</span>
+          <strong>{weakest ? weakest.name : "--"}</strong>
+          <small>{weakest ? `${weakest.rate}% · ${weakest.total}题` : "样本不足"}</small>
+        </div>
+      </section>
+
       <section className="metric-grid">
         <Metric label="筛选题量" value={detail.total} unit="题" icon={<CalendarDays />} />
         <Metric label="正确率" value={`${detail.rate}%`} unit={`目标 ${settings.targetRate}%`} icon={<Target />} />
-        <Metric label="平均配速" value={detail.pace ? `${detail.pace}s` : "--"} unit="秒/题" icon={<Gauge />} />
+        <Metric label="平均配速" value={detail.pace || "--"} unit="秒/题" icon={<Gauge />} />
         <Metric label="待复盘" value={detail.pending} unit="条" icon={<ListChecks />} />
       </section>
 

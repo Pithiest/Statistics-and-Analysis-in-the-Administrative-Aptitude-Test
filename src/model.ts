@@ -124,6 +124,15 @@ export const MODULES: ModuleConfig[] = [
   }
 ];
 
+const SUBTYPE_MODULE_RULES: Array<{ module: ModuleName; pattern: RegExp }> = [
+  { module: "言语理解与表达", pattern: /言语|逻辑填空|中心理解|片段阅读|主旨|意图|标题|细节判断|语句|篇章|下文/ },
+  { module: "判断推理", pattern: /判断推理|图形推理|定义判断|类比推理|逻辑判断|加强|削弱|翻译推理|真假|原因解释|论证/ },
+  { module: "资料分析", pattern: /资料分析|文字资料|表格资料|图形资料|综合资料|增长率|增长量|比重|平均数|倍数|基期|现期/ },
+  { module: "数量关系", pattern: /数量关系|数学|工程问题|行程问题|经济利润|利润|排列组合|概率|几何|容斥|最值|年龄|日期问题|植树|方阵/ },
+  { module: "常识判断", pattern: /常识|政治|马克思|毛概|中特|党史|时政|法律|法治|宪法|行政法|刑法|民法|法理|科技|人文|历史|地理|文学|文化|国情|省情|经济管理|经济常识|宏观经济|管理常识|公文|行政管理/ },
+  { module: "全模块测试", pattern: /全测|全模块|全套|套卷|模拟|模考|混合训练|考前冲刺/ }
+];
+
 export const ERROR_REASONS = ["无", "粗心看错", "时间紧张", "知识盲区", "方法不熟", "逻辑掉坑", "计算失误", "审题偏差"];
 
 export const QUOTES = [
@@ -249,6 +258,15 @@ export function firstSubType(module: ModuleName | "") {
 export function subTypeOptions(module: ModuleName | "", current = "") {
   const base = moduleConfig(module)?.subTypes || [];
   return current && !base.includes(current) ? [...base, current] : base;
+}
+
+export function moduleSubTypes(records: TrainingRecord[], module: ModuleName) {
+  const base = moduleConfig(module)?.subTypes || [];
+  const fromRecords = active(records)
+    .filter((item) => item.module === module)
+    .map((item) => item.subType)
+    .filter(Boolean);
+  return [...new Set([...base, ...fromRecords])];
 }
 
 export function shortName(module: ModuleName | "") {
@@ -564,7 +582,14 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
     updated_at?: string;
     wrong?: number;
   };
-  const module = normalizeModule(String(item.module || ""));
+  const moduleText = String(item.module || "");
+  const subTypeText = String(item.subType || item.sub_type || item.sub || "");
+  const noteText = String(item.note || "");
+  let module = normalizeModule(moduleText);
+  const inferredModule = inferModule(moduleText, subTypeText, noteText, item.tags);
+  if (!module || (module === "全模块测试" && inferredModule && inferredModule !== "全模块测试")) {
+    module = inferredModule;
+  }
   if (!module) return null;
   const total = clamp(item.total, 0, 9999);
   let correct = clamp(item.correct, 0, total);
@@ -579,7 +604,7 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
     id: String(item.id || randomId()),
     date: validDate(String(item.date || ""), today()),
     module,
-    subType: normalizeSubType(String(item.subType || item.sub_type || item.sub || ""), module),
+    subType: normalizeSubType(subTypeText, module),
     total,
     correct,
     duration,
@@ -834,11 +859,56 @@ function normalizeModule(value: string): ModuleName | "" {
   return "";
 }
 
+function inferModule(moduleText: string, subTypeText: string, noteText = "", tags: unknown = ""): ModuleName | "" {
+  const primary = [subTypeText, moduleText].join(" ");
+  for (const rule of SUBTYPE_MODULE_RULES) {
+    if (rule.pattern.test(primary)) return rule.module;
+  }
+  if (!normalizeModule(moduleText)) {
+    const fallback = [Array.isArray(tags) ? tags.join(" ") : String(tags || ""), noteText].join(" ");
+    for (const rule of SUBTYPE_MODULE_RULES) {
+      if (rule.pattern.test(fallback)) return rule.module;
+    }
+  }
+  return "";
+}
+
 function normalizeSubType(value: string, module: ModuleName) {
   const text = value.trim();
   const options = moduleConfig(module)?.subTypes || [];
   if (!text || text === "综合") return options.includes("综合卷/混刷") ? "综合卷/混刷" : options[0] || "";
   if (options.includes(text)) return text;
+  if (module === "言语理解与表达") {
+    if (/逻辑填空/.test(text)) return "逻辑填空";
+    if (/中心|片段|主旨|意图|标题/.test(text)) return "中心理解";
+    if (/细节/.test(text)) return "细节判断";
+    if (/语句|排序|填句|下文/.test(text)) return "语句表达";
+    if (/篇章/.test(text)) return "篇章阅读";
+  }
+  if (module === "判断推理") {
+    if (/图形/.test(text)) return "图形推理";
+    if (/定义/.test(text)) return "定义判断";
+    if (/类比/.test(text)) return "类比推理";
+    if (/逻辑|加强|削弱|论证|翻译|真假/.test(text)) return "逻辑判断";
+  }
+  if (module === "资料分析") {
+    if (/文字/.test(text)) return "文字资料";
+    if (/表格/.test(text)) return "表格资料";
+    if (/图形|图表/.test(text)) return "图形资料";
+  }
+  if (module === "数量关系") {
+    if (/工程/.test(text)) return "工程问题";
+    if (/行程/.test(text)) return "行程问题";
+    if (/经济利润|利润/.test(text)) return "经济利润";
+    if (/排列|组合|概率/.test(text)) return "排列组合";
+    if (/几何/.test(text)) return "几何问题";
+  }
+  if (module === "常识判断") {
+    if (/政治|马克思|毛概|中特|党史|时政/.test(text)) return "政治理论";
+    if (/法律|法治|宪法|行政法|刑法|民法|法理/.test(text)) return "法律常识";
+    if (/科技|人文|历史|地理|文学|文化|国情|省情/.test(text)) return "科技人文";
+    if (/经济管理|经济常识|宏观经济|管理|公文|行政管理/.test(text)) return "经济管理";
+  }
   if (/综合|混刷|混合/.test(text) && options.includes("综合卷/混刷")) return "综合卷/混刷";
   if (/套|全/.test(text) && module === "全模块测试") return "全套模拟";
   return text;
