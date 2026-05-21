@@ -44,6 +44,7 @@ import {
   PieChart,
   PolarAngleAxis,
   PolarGrid,
+  PolarRadiusAxis,
   Radar,
   RadarChart,
   ResponsiveContainer,
@@ -584,6 +585,7 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
                 <RadarChart data={radarData}>
                   <PolarGrid />
                   <PolarAngleAxis dataKey="module" />
+                  <PolarRadiusAxis angle={90} domain={[0, 100]} tickCount={5} />
                   <Radar dataKey="正确率" stroke="#2563eb" fill="#2563eb" fillOpacity={0.24} />
                   <Tooltip />
                 </RadarChart>
