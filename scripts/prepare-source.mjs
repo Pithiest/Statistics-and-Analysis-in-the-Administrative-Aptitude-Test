@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://atwsraivphybkfmyeubd.supabase.co";
 const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publishable_y6wlba5S8qYJebIgnc389Q_zW6pMJnv";
@@ -17,11 +17,11 @@ if (!payload) {
 }
 
 for (const file of payload.delete || []) {
-  await rm(resolve(file), { force: true });
+  await rm(safeResolve(file), { force: true });
 }
 
 for (const [file, content] of Object.entries(payload.files || {})) {
-  const target = resolve(file);
+  const target = safeResolve(file);
   await mkdir(dirname(target), { recursive: true });
   await writeFile(target, Buffer.from(content, "base64"));
 }
@@ -45,4 +45,13 @@ async function readRemotePayload() {
   const rows = await response.json();
   if (!rows[0]?.payload) throw new Error("Source payload is empty.");
   return JSON.parse(rows[0].payload);
+}
+
+function safeResolve(file) {
+  const target = resolve(file);
+  const pathFromRoot = relative(process.cwd(), target);
+  if (!file || pathFromRoot.startsWith("..") || isAbsolute(pathFromRoot)) {
+    throw new Error(`Refusing to write outside project root: ${file}`);
+  }
+  return target;
 }
