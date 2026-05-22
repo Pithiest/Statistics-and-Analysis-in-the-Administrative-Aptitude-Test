@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   BarChart3,
   CalendarDays,
@@ -37,16 +37,15 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
-  Pie,
-  PieChart,
+  Legend,
   PolarAngleAxis,
   PolarGrid,
   PolarRadiusAxis,
   Radar,
   RadarChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -98,7 +97,6 @@ const nav: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
   { id: "settings", label: "设置", icon: <KeyRound /> }
 ];
 
-const chartPalette = ["#2563eb", "#0f766e", "#7c3aed", "#b45309", "#be123c", "#0891b2", "#475569"];
 const SYNC_DEBOUNCE_MS = 10_000;
 const PULL_INTERVAL_MS = 120_000;
 
@@ -129,9 +127,11 @@ export function App() {
   const syncingRef = useRef(false);
   const dirtyRef = useRef(false);
   const lastPullRef = useRef(0);
+  const changeVersionRef = useRef(0);
   const debounceRef = useRef<number>();
 
   const data = useMemo(() => dashboard(records, settings), [records, settings]);
+  const reduceMotion = useReducedMotion();
   const currentRecord = editingId ? records.find((item) => item.id === editingId) : undefined;
 
   useEffect(() => {
@@ -180,6 +180,7 @@ export function App() {
   }
 
   function scheduleSync() {
+    changeVersionRef.current += 1;
     dirtyRef.current = true;
     if (!codeRef.current) {
       setSyncState("local");
@@ -216,14 +217,19 @@ export function App() {
       return;
     }
     const upload = options.upload !== false;
+    const uploadVersion = changeVersionRef.current;
     syncingRef.current = true;
     if (!options.quiet) setSyncState("syncing");
     try {
       const next = await syncSpace(code, recordsRef.current, settingsRef.current, { upload });
-      setRecords(next.records);
-      setSettings(next.settings);
+      const mergedRecords = normalizeRecords([...next.records, ...recordsRef.current]);
+      const nextSettings = normalizeSettings(next.settings);
+      const currentSettings = normalizeSettings(settingsRef.current);
+      const mergedSettings = nextSettings.updatedAt > currentSettings.updatedAt ? nextSettings : currentSettings;
+      setRecords(mergedRecords);
+      setSettings(mergedSettings);
       setLastSync(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
-      if (upload) dirtyRef.current = false;
+      if (upload && changeVersionRef.current === uploadVersion) dirtyRef.current = false;
       setSyncState(dirtyRef.current ? "pending" : "synced");
     } catch (error) {
       console.error(error);
@@ -316,11 +322,12 @@ export function App() {
       try {
         const parsed = JSON.parse(String(reader.result || "{}"));
         const imported = normalizeRecords(Array.isArray(parsed) ? parsed : parsed.records);
-        if (!imported.length) throw new Error("empty");
-        setRecords((list) => normalizeRecords([...imported, ...list]));
-        if (parsed.settings) setSettings(normalizeSettings({ ...settingsRef.current, ...parsed.settings }));
+        const hasSettings = Boolean(parsed.settings && typeof parsed.settings === "object");
+        if (!imported.length && !hasSettings) throw new Error("empty");
+        if (imported.length) setRecords((list) => normalizeRecords([...imported, ...list]));
+        if (hasSettings) setSettings(stampSettings(normalizeSettings({ ...settingsRef.current, ...parsed.settings })));
         scheduleSync();
-        notify(`已导入 ${imported.length} 条记录。`);
+        notify(imported.length ? `已导入 ${imported.length} 条记录。` : "已导入设置。");
       } catch (error) {
         console.error(error);
         notify("导入失败，请检查 JSON 备份文件。");
@@ -418,10 +425,10 @@ export function App() {
         <AnimatePresence mode="wait">
           <motion.section
             key={view}
-            initial={{ opacity: 0, y: 8, filter: "blur(3px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            exit={{ opacity: 0, y: -6, filter: "blur(2px)" }}
-            transition={{ type: "spring", stiffness: 320, damping: 34, mass: 0.7 }}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+            transition={{ duration: reduceMotion ? 0.01 : 0.18, ease: [0.22, 1, 0.36, 1] }}
             className="page"
           >
             {view === "today" && <Today data={data} settings={settings} onRecord={() => setView("record")} onReview={() => setView("review")} />}
@@ -490,7 +497,7 @@ export function App() {
                   codeRef.current = normalized;
                   setSpaceCode(normalized);
                   setSyncState(normalized ? "syncing" : "local");
-                  if (normalized) window.setTimeout(() => void syncNow({ upload: false }), 0);
+                  if (normalized) window.setTimeout(() => void syncNow({ upload: true }), 0);
                 }}
                 syncState={syncState}
                 lastSync={lastSync}
@@ -510,7 +517,7 @@ export function App() {
                   setSyncState("local");
                   setLastSync("");
                 }}
-                onExportJson={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 6, records: data.rows, settings }, null, 2), "application/json;charset=utf-8")}
+                onExportJson={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 7, records, settings }, null, 2), "application/json;charset=utf-8")}
                 onExportCsv={() => download(`xingce-ledger-${today()}.csv`, exportCsv(data.rows), "text/csv;charset=utf-8")}
                 onImport={importBackup}
               />
@@ -534,13 +541,26 @@ export function App() {
 }
 
 function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof dashboard>; settings: Settings; onRecord: () => void; onReview: () => void }) {
-  const radarData = data.moduleStats.map((item) => ({ module: item.short, 正确率: item.rate || 0, 题量: Math.min(100, item.total) }));
+  const radarData = data.moduleStats.map((item) => ({ module: item.short, 正确率: item.rate || 0, 样本: item.total }));
+  const remaining = Math.max(0, settings.dailyGoal - data.todayTotal);
+  const rateGap = data.todayTotal ? Math.max(0, settings.targetRate - data.todayRate) : 0;
+  const heroTitle = !data.total
+    ? "先建立第一条训练记录"
+    : remaining
+      ? `今天还差 ${remaining} 题`
+      : "今日题量已达标";
+  const heroDetail = !data.total
+    ? "录入一组真实训练后，系统会开始判断题量、正确率、错因和配速。"
+    : rateGap
+      ? `今日正确率 ${data.todayRate}%，距离目标还差 ${rateGap} 个点。`
+      : `今日正确率 ${data.todayRate}%，继续保持复盘节奏。`;
   return (
     <div className="stack">
       <section className="hero">
-        <div>
-          <h2>{data.quote}</h2>
-          <span>今天 {data.todayTotal} 题，累计 {data.total} 题，复盘队列 {data.pending.length} 条。</span>
+        <div className="hero-copy">
+          <h2>{heroTitle}</h2>
+          <span>{heroDetail}</span>
+          <p className="quote-line">{data.quote}</p>
           <div className="hero-actions">
             <button className="primary-btn" onClick={onRecord}><Plus /> 录入训练</button>
             <button className="soft-btn" onClick={onReview}><ListChecks /> 处理复盘</button>
@@ -554,11 +574,34 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
         </div>
       </section>
 
+      <section className="focus-strip">
+        <div>
+          <span>近 7 天</span>
+          <strong>{data.weekTotal}</strong>
+          <small>{data.weekRate ? `${data.weekRate}% 正确率` : "暂无样本"}</small>
+        </div>
+        <div>
+          <span>连续训练</span>
+          <strong>{data.streak}</strong>
+          <small>累计活跃 {data.activeDays} 天</small>
+        </div>
+        <div>
+          <span>当前弱项</span>
+          <strong>{data.weak?.short || "--"}</strong>
+          <small>{data.weak ? `${data.weak.rate}% · ${data.weak.total}题` : "等待数据"}</small>
+        </div>
+        <div>
+          <span>复盘压力</span>
+          <strong>{data.pending.length}</strong>
+          <small>{data.pending.length ? "先处理最近错因" : "队列清爽"}</small>
+        </div>
+      </section>
+
       <section className="metric-grid">
+        <Metric label="累计正确率" value={`${data.totalRate}%`} unit={`${data.correct}/${data.total || 0} 题`} icon={<Target />} />
         <Metric label="今日题量" value={data.todayTotal} unit={`目标 ${settings.dailyGoal} 题`} icon={<Flame />} />
-        <Metric label="今日正确率" value={`${data.todayRate}%`} unit={`目标 ${settings.targetRate}%`} icon={<Target />} />
         <Metric label="平均配速" value={data.avgPace || "--"} unit="秒/题" icon={<Gauge />} />
-        <Metric label="复盘队列" value={data.pending.length} unit="条待处理" icon={<ListChecks />} />
+        <Metric label="最慢模块" value={data.slow?.short || "--"} unit={data.slow?.pace ? `${data.slow.pace}s/题` : "暂无样本"} icon={<Clock3 />} />
       </section>
 
       <section className="grid-two wide-left">
@@ -570,7 +613,9 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
                 <XAxis dataKey="label" tickLine={false} axisLine={false} />
                 <YAxis yAxisId="left" tickLine={false} axisLine={false} />
                 <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} />
-                <Tooltip />
+                <Tooltip formatter={chartFormatter} />
+                <Legend verticalAlign="top" height={28} />
+                <ReferenceLine yAxisId="right" y={settings.targetRate} stroke="#64748b" strokeDasharray="4 4" />
                 <Area yAxisId="left" type="monotone" dataKey="total" name="题量" stroke="#2563eb" fill="#2563eb22" />
                 <Line yAxisId="right" type="monotone" dataKey="rate" name="正确率" stroke="#0f766e" strokeWidth={2.4} dot={false} connectNulls />
                 <Line yAxisId="right" type="monotone" dataKey="pace" name="配速" stroke="#b45309" strokeWidth={2} dot={false} strokeDasharray="5 5" connectNulls />
@@ -587,27 +632,21 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
                   <PolarAngleAxis dataKey="module" />
                   <PolarRadiusAxis angle={90} domain={[0, 100]} tickCount={5} />
                   <Radar dataKey="正确率" stroke="#2563eb" fill="#2563eb" fillOpacity={0.24} />
-                  <Tooltip />
+                  <Tooltip formatter={chartFormatter} />
                 </RadarChart>
               </ResponsiveContainer>
             </ChartBox>
           ) : <Empty text="录入后生成模块矩阵。" />}
+          <div className="matrix-note">
+            {data.moduleStats.map((item) => <span key={item.id}>{item.short} {item.total}题</span>)}
+          </div>
         </Panel>
       </section>
 
       <section className="grid-two">
         <Panel title="错因结构" note="按错题数汇总">
           {data.reasons.length ? (
-            <ChartBox compact>
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={data.reasons} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={3}>
-                    {data.reasons.map((item, index) => <Cell key={item.name} fill={chartPalette[index % chartPalette.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </ChartBox>
+            <Bars rows={data.reasons.map((item) => ({ name: item.name, value: item.value, hint: `${item.value}错` }))} empty="暂无错因数据" />
           ) : <Empty text="暂无错因数据。" />}
         </Panel>
         <Panel title="训练热力" note="近 35 天题量">
@@ -779,6 +818,17 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
         </select>
       </section>
 
+      <section className="diagnosis-action">
+        <div>
+          <span>下一步动作</span>
+          <strong>{weakest ? `优先复盘 ${weakest.name}` : "先补一组真实样本"}</strong>
+          <p>{detail.actions[2] || detail.actions[0]}</p>
+        </div>
+        <div className="button-row">
+          {weakest && <button className="soft-btn" onClick={() => setSubType(weakest.name)}><Target /> 聚焦小项</button>}
+        </div>
+      </section>
+
       <section className="diagnosis-summary">
         <div>
           <span>模块总样本</span>
@@ -814,7 +864,9 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
                   <XAxis dataKey="label" tickLine={false} axisLine={false} />
                   <YAxis yAxisId="left" tickLine={false} axisLine={false} domain={[0, 100]} />
                   <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} />
-                  <Tooltip />
+                  <Tooltip formatter={chartFormatter} />
+                  <Legend verticalAlign="top" height={28} />
+                  <ReferenceLine yAxisId="left" y={settings.targetRate} stroke="#64748b" strokeDasharray="4 4" />
                   <Line yAxisId="left" type="monotone" dataKey="rate" name="正确率" stroke="#2563eb" strokeWidth={2.6} dot={false} connectNulls />
                   <Line yAxisId="right" type="monotone" dataKey="pace" name="配速" stroke="#b45309" strokeWidth={2.2} dot={false} strokeDasharray="5 5" connectNulls />
                 </LineChart>
@@ -838,7 +890,7 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                   <XAxis type={detail.subTypes.length > 4 ? "number" : "category"} dataKey={detail.subTypes.length > 4 ? undefined : "name"} tickLine={false} axisLine={false} />
                   <YAxis type={detail.subTypes.length > 4 ? "category" : "number"} dataKey={detail.subTypes.length > 4 ? "name" : undefined} tickLine={false} axisLine={false} width={82} />
-                  <Tooltip />
+                  <Tooltip formatter={chartFormatter} />
                   <Bar dataKey="rate" name="正确率" fill="#2563eb" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -892,6 +944,19 @@ function Ledger({ records, query, module, reason, sort, onQuery, onModule, onRea
   onEdit: (record: TrainingRecord) => void;
   onDelete: (record: TrainingRecord) => void;
 }) {
+  const total = records.reduce((acc, item) => acc + item.total, 0);
+  const correct = records.reduce((acc, item) => acc + item.correct, 0);
+  const wrong = Math.max(0, total - correct);
+  const pace = avgPace(records);
+  const activeDayCount = new Set(records.map((item) => item.date)).size;
+  const pending = records.filter((item) => item.reviewStatus === "pending").length;
+  const hasFilter = Boolean(query || module !== "全部模块" || reason !== "全部错因" || sort !== "date-desc");
+  const clearFilters = () => {
+    onQuery("");
+    onModule("全部模块");
+    onReason("全部错因");
+    onSort("date-desc");
+  };
   return (
     <div className="stack">
       <section className="toolbar ledger-toolbar">
@@ -914,8 +979,15 @@ function Ledger({ records, query, module, reason, sort, onQuery, onModule, onRea
           <option value="pace-slow">配速慢到快</option>
           <option value="pace-fast">配速快到慢</option>
         </select>
+        <button className="soft-btn" onClick={clearFilters} disabled={!hasFilter}>清除筛选</button>
       </section>
-      <Panel title={`训练台账 · ${records.length} 条`} note="电脑看表格，移动端看卡片">
+      <section className="ledger-summary">
+        <div><span>筛选题量</span><strong>{total}</strong><small>{records.length} 条记录</small></div>
+        <div><span>筛选正确率</span><strong>{percent(correct, total)}%</strong><small>错 {wrong} 题</small></div>
+        <div><span>平均配速</span><strong>{pace || "--"}</strong><small>秒/题</small></div>
+        <div><span>复盘状态</span><strong>{pending}</strong><small>{activeDayCount} 个训练日</small></div>
+      </section>
+      <Panel title={`训练台账 · ${records.length} 条`} note="按筛选条件查看训练明细">
         <div className="table-wrap">
           <table>
             <thead>
@@ -956,15 +1028,18 @@ function Ledger({ records, query, module, reason, sort, onQuery, onModule, onRea
               <div className="ledger-stats">
                 <b>{percent(item.correct, item.total)}%</b>
                 <span>{item.correct}/{item.total}</span>
+                <span>{Math.max(0, item.total - item.correct)} 错</span>
                 <span>{paceText(item)}</span>
               </div>
-              <p>{item.errorReason}{item.note ? ` · ${item.note}` : ""}</p>
+              <p>{item.errorReason} · {paceState(item)}{item.reviewStatus === "pending" ? " · 待复盘" : ""}</p>
+              {(item.tags.length > 0 || item.note) && <small className="ledger-card-meta">{[item.tags.join(" / "), item.note].filter(Boolean).join(" · ")}</small>}
               <div className="card-actions">
                 <button className="soft-btn" onClick={() => onEdit(item)}><Edit3 /> 编辑</button>
                 <button className="soft-btn danger-text" onClick={() => onDelete(item)}><Trash2 /> 删除</button>
               </div>
             </article>
           ))}
+          {!records.length && <Empty text="没有符合条件的记录。" />}
         </div>
       </Panel>
     </div>
@@ -1029,6 +1104,16 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
       </section>
     </div>
   );
+}
+
+function chartFormatter(value: unknown, name: unknown): [string, string] {
+  const label = String(name || "");
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === null || raw === undefined || raw === "") return ["--", label];
+  if (label.includes("正确率")) return [`${raw}%`, label];
+  if (label.includes("配速")) return [`${raw}s/题`, label];
+  if (label.includes("题量") || label.includes("样本")) return [`${raw}题`, label];
+  return [String(raw), label];
 }
 
 function Metric({ label, value, unit, icon }: { label: string; value: ReactNode; unit: string; icon: ReactNode }) {

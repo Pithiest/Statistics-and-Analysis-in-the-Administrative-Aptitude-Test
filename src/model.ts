@@ -308,8 +308,9 @@ export function paceState(record: TrainingRecord) {
 }
 
 export function avgPace(records: TrainingRecord[]) {
-  const total = sum(records, "total");
-  const duration = sum(records, "duration");
+  const paced = records.filter((item) => item.total > 0 && item.duration > 0);
+  const total = sum(paced, "total");
+  const duration = sum(paced, "duration");
   return total ? Math.round((duration * 60) / total) : 0;
 }
 
@@ -387,7 +388,7 @@ export function createRecord(form: EntryForm, previous?: TrainingRecord): Traini
     tags: normalizeTags(form.tags),
     note: form.note.trim(),
     reviewStatus: shouldReview ? "pending" : "reviewed",
-    reviewedAt: shouldReview ? previous?.reviewedAt || null : previous?.reviewedAt || now,
+    reviewedAt: shouldReview ? null : previous?.reviewedAt || now,
     createdAt: previous?.createdAt || now,
     updatedAt: now,
     deletedAt: null
@@ -424,9 +425,12 @@ export function formFromTemplate(form: EntryForm, template: QuickTemplate): Entr
 export function dashboard(records: TrainingRecord[], settings: Settings) {
   const rows = active(records);
   const todayRows = rows.filter((item) => item.date === today());
+  const weekRows = rows.filter((item) => item.date >= daysAgo(6));
   const total = sum(rows, "total");
   const correct = sum(rows, "correct");
   const todayTotal = sum(todayRows, "total");
+  const weekTotal = sum(weekRows, "total");
+  const weekCorrect = sum(weekRows, "correct");
   const pending = rows.filter((item) => item.reviewStatus === "pending").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const moduleStats = MODULES.filter((mod) => mod.name !== "全模块测试").map((mod) => {
     const scoped = rows.filter((item) => item.module === mod.name);
@@ -452,6 +456,10 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
     totalRate: percent(correct, total),
     todayTotal,
     todayRate: percent(sum(todayRows, "correct"), todayTotal),
+    weekTotal,
+    weekRate: percent(weekCorrect, weekTotal),
+    activeDays: new Set(rows.filter((item) => item.total > 0).map((item) => item.date)).size,
+    streak: trainingStreak(rows),
     avgPace: avgPace(rows),
     pending,
     moduleStats,
@@ -462,18 +470,17 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
     weak,
     slow,
     goalDone: Math.min(100, percent(todayTotal, settings.dailyGoal)),
-    recommendations: recommendations({ total, todayTotal, pending, weak, reasons }, settings)
+    recommendations: recommendations({ total, todayTotal, pending, weak, slow, reasons }, settings)
   };
 }
 
 export function moduleDetail(records: TrainingRecord[], module: ModuleName, settings: Settings, subType = "全部题型", range = "30") {
-  let rows = active(records).filter((item) => item.module === module);
-  const allModuleRows = rows;
-  if (subType !== "全部题型") rows = rows.filter((item) => item.subType === subType);
-  if (range !== "全部") rows = rows.filter((item) => item.date >= daysAgo(Number(range) - 1));
+  const allModuleRows = active(records).filter((item) => item.module === module);
+  const rangedRows = range === "全部" ? allModuleRows : allModuleRows.filter((item) => item.date >= daysAgo(Number(range) - 1));
+  const rows = subType === "全部题型" ? rangedRows : rangedRows.filter((item) => item.subType === subType);
   const total = sum(rows, "total");
   const correct = sum(rows, "correct");
-  const subTypes = aggregate(rows, (item) => item.subType)
+  const subTypes = aggregate(rangedRows, (item) => item.subType)
     .map((item) => ({ ...item, rate: percent(item.correct, item.total), wrong: item.total - item.correct }))
     .sort((a, b) => a.rate - b.rate || b.wrong - a.wrong);
   const reasons = aggregateWrong(rows, (item) => item.errorReason).filter((item) => item.name !== "无").slice(0, 7);
@@ -540,7 +547,7 @@ export async function syncSpace(spaceCode: string, records: TrainingRecord[], se
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({
         space_hash: targetHash,
-        payload: await encryptText(JSON.stringify({ version: 6, records: mergedRecords, settings: mergedSettings, updatedAt: new Date().toISOString() }), code),
+        payload: await encryptText(JSON.stringify({ version: 7, records: mergedRecords, settings: mergedSettings, updatedAt: new Date().toISOString() }), code),
         updated_at: new Date().toISOString()
       })
     });
@@ -596,15 +603,19 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
   if (!Number.isFinite(Number(item.correct)) && Number.isFinite(Number(item.wrong))) correct = Math.max(0, total - Number(item.wrong));
   const duration = Math.round((Number(item.duration) || 0) * 10) / 10;
   if (!total || correct > total) return null;
-  const now = new Date().toISOString();
+  const date = validDate(String(item.date || ""), today());
   const errorReason = normalizeReason(String(item.errorReason || item.error_reason || item.reason || "无"));
+  const subType = normalizeSubType(subTypeText, module);
+  const createdAt = validIso(String(item.createdAt || item.created_at || ""), `${date}T00:00:00.000Z`);
+  const updatedAt = validIso(String(item.updatedAt || item.updated_at || ""), createdAt);
+  const id = String(item.id || "").trim() || stableLegacyId({ date, module, subType, total, correct, duration, errorReason, tags: item.tags, note: noteText });
   const wrong = Math.max(0, total - correct);
   const reviewed = item.reviewStatus === "reviewed" || item.review_status === "reviewed";
   return {
-    id: String(item.id || randomId()),
-    date: validDate(String(item.date || ""), today()),
+    id,
+    date,
     module,
-    subType: normalizeSubType(subTypeText, module),
+    subType,
     total,
     correct,
     duration,
@@ -613,8 +624,8 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
     note: String(item.note || "").trim(),
     reviewStatus: reviewed || (wrong === 0 && errorReason === "无") ? "reviewed" : "pending",
     reviewedAt: item.reviewedAt || item.reviewed_at || null,
-    createdAt: String(item.createdAt || item.created_at || now),
-    updatedAt: String(item.updatedAt || item.updated_at || now),
+    createdAt,
+    updatedAt,
     deletedAt: item.deletedAt || item.deleted_at || null
   };
 }
@@ -663,7 +674,12 @@ async function parsePayload(payload: string, code: string) {
         texts.push(await decryptText(raw, code, salt));
         break;
       } catch {
-        continue;
+        try {
+          texts.push(await decryptText(raw, code, salt, true));
+          break;
+        } catch {
+          continue;
+        }
       }
     }
   }
@@ -697,15 +713,17 @@ const encoder = new TextEncoder();
 const keyCache = new Map<string, CryptoKey>();
 
 async function candidateHashes(code: string) {
-  const variants = Array.from(new Set([code, code.toLowerCase(), code.toUpperCase()]));
+  const normalized = normalizeCode(code).toLowerCase();
+  const variants = Array.from(new Set([normalized, code, code.toLowerCase(), code.toUpperCase()].filter(Boolean)));
   return Promise.all(variants.map(hashText));
 }
 
-async function deriveKey(code: string, salt: string) {
-  const cacheKey = `${salt}:${code}`;
+async function deriveKey(code: string, salt: string, raw = false) {
+  const normalized = raw ? code : normalizeCode(code).toLowerCase();
+  const cacheKey = `${salt}:${raw ? "raw" : "std"}:${normalized}`;
   const cached = keyCache.get(cacheKey);
   if (cached) return cached;
-  const material = await crypto.subtle.importKey("raw", encoder.encode(code), "PBKDF2", false, ["deriveKey"]);
+  const material = await crypto.subtle.importKey("raw", encoder.encode(normalized), "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey(
     { name: "PBKDF2", salt: encoder.encode(salt), iterations: 120_000, hash: "SHA-256" },
     material,
@@ -723,10 +741,10 @@ async function encryptText(text: string, code: string) {
   return `${toBase64(iv)}.${toBase64(cipher)}`;
 }
 
-async function decryptText(payload: string, code: string, salt: string) {
+async function decryptText(payload: string, code: string, salt: string, raw = false) {
   const [iv, cipher] = payload.split(".");
   if (!iv || !cipher) throw new Error("bad payload");
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(iv) }, await deriveKey(code, salt), fromBase64(cipher));
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(iv) }, await deriveKey(code, salt, raw), fromBase64(cipher));
   return new TextDecoder().decode(plain);
 }
 
@@ -750,12 +768,13 @@ function makeTrend(records: TrainingRecord[], days: number) {
     const date = daysAgo(days - index - 1);
     const scoped = records.filter((item) => item.date === date);
     const total = sum(scoped, "total");
+    const pace = avgPace(scoped);
     return {
       date,
       label: date.slice(5),
       total,
       rate: total ? percent(sum(scoped, "correct"), total) : null,
-      pace: total ? avgPace(scoped) : null
+      pace: total && pace ? pace : null
     };
   });
 }
@@ -800,11 +819,19 @@ function aggregateWrong(records: TrainingRecord[], key: (record: TrainingRecord)
   return [...map.values()].sort((a, b) => b.value - a.value);
 }
 
-function recommendations(data: { total: number; todayTotal: number; pending: TrainingRecord[]; weak?: { short: string; rate: number }; reasons: Array<{ name: string; value: number }> }, settings: Settings) {
+function recommendations(data: {
+  total: number;
+  todayTotal: number;
+  pending: TrainingRecord[];
+  weak?: { short: string; rate: number };
+  slow?: { short: string; pace: number };
+  reasons: Array<{ name: string; value: number }>;
+}, settings: Settings) {
   if (!data.total) return ["先录入一组真实训练，不需要追求好看，样本比空白更重要。", "录入时保留题型、耗时和错因，后面诊断才会准。"];
   const list = [];
   if (data.pending.length) list.push(`复盘队列还有 ${data.pending.length} 条，先处理最近的错因。`);
   if (data.weak) list.push(`${data.weak.short} 当前正确率偏低，下一轮优先做小题量精练。`);
+  if (data.slow?.pace) list.push(`${data.slow.short} 配速偏慢，建议下一组用计时器控制节奏。`);
   if (data.reasons[0]) list.push(`${data.reasons[0].name} 是当前主要错因，建议单独建立一组复盘记录。`);
   if (data.todayTotal < settings.dailyGoal) list.push(`今日还差 ${Math.max(0, settings.dailyGoal - data.todayTotal)} 题，适合补一组短训练。`);
   return list.slice(0, 4);
@@ -818,6 +845,13 @@ function quoteOfDay() {
 
 function active(records: TrainingRecord[]) {
   return normalizeRecords(records).filter((item) => !item.deletedAt);
+}
+
+function trainingStreak(records: TrainingRecord[]) {
+  const dates = new Set(records.filter((item) => item.total > 0 && !item.deletedAt).map((item) => item.date));
+  let count = 0;
+  while (dates.has(daysAgo(count))) count += 1;
+  return count;
 }
 
 function sum(records: TrainingRecord[], key: "total" | "correct" | "duration") {
@@ -933,6 +967,10 @@ function validDate(value: string, fallback: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
 }
 
+function validIso(value: string, fallback: string) {
+  return Number.isNaN(Date.parse(value)) ? fallback : new Date(value).toISOString();
+}
+
 function positiveNumber(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? Math.round(number * 10) / 10 : 0;
@@ -946,4 +984,14 @@ function clamp(value: unknown, min: number, max: number) {
 
 function randomId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function stableLegacyId(input: unknown) {
+  const text = JSON.stringify(input);
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `legacy-${(hash >>> 0).toString(36)}`;
 }
