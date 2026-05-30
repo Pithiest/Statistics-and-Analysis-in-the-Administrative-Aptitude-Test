@@ -18,7 +18,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          react: ["react", "react-dom", "react-dom/client", "scheduler", "framer-motion"]
+          react: ["react", "react-dom", "react-dom/client", "scheduler"]
         }
       }
     }
