@@ -319,9 +319,6 @@ export function loadState() {
   const settings = normalizeSettings(readJson(KEYS.settings) || firstLegacy(OLD_SETTINGS_KEYS) || DEFAULT_SETTINGS);
   const cloudValue = readJson(KEYS.cloud) || firstLegacy(OLD_CLOUD_KEYS) || {};
   const cloud = normalizeCode(String(cloudValue.spaceCode || ""));
-  localStorage.setItem(KEYS.records, JSON.stringify(records));
-  localStorage.setItem(KEYS.settings, JSON.stringify(settings));
-  if (cloud) localStorage.setItem(KEYS.cloud, JSON.stringify({ spaceCode: cloud }));
   return { records, settings, spaceCode: cloud };
 }
 
@@ -844,7 +841,7 @@ function quoteOfDay() {
 }
 
 function active(records: TrainingRecord[]) {
-  return normalizeRecords(records).filter((item) => !item.deletedAt);
+  return records.filter((item) => !item.deletedAt);
 }
 
 function trainingStreak(records: TrainingRecord[]) {

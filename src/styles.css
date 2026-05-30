@@ -44,6 +44,27 @@ body {
 button, input, select, textarea { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
 svg { width: 20px; height: 20px; stroke-width: 2.2; flex: 0 0 auto; }
+.runtime-fallback {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--text);
+}
+.runtime-fallback strong { font-size: 26px; }
+.runtime-fallback span { color: var(--muted); font-weight: 800; }
+.runtime-fallback button {
+  justify-self: center;
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 18px;
+  color: #fff;
+  font-weight: 900;
+  background: linear-gradient(135deg, var(--blue), var(--teal));
+}
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 276px minmax(0, 1fr); }
 .sidebar {
@@ -226,6 +247,26 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 .panel-head span { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 800; }
 .chart-box { width: 100%; height: 294px; animation: chartFade 0.24s ease both; }
 .chart-box.compact { height: 238px; }
+.chart-loading {
+  height: 100%;
+  min-height: 180px;
+  border-radius: 14px;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--primary) 14%, transparent), transparent),
+    repeating-linear-gradient(to bottom, transparent 0 44px, var(--line) 45px 46px),
+    color-mix(in srgb, var(--panel-solid) 72%, transparent);
+  background-size: 220px 100%, 100% 100%, 100% 100%;
+  animation: chartLoad 1.15s ease-in-out infinite;
+}
+.chart-loading i {
+  display: block;
+  width: 64%;
+  height: 58%;
+  margin: 54px auto 0;
+  border-left: 2px solid var(--line);
+  border-bottom: 2px solid var(--line);
+  opacity: 0.65;
+}
 .recharts-wrapper text { fill: var(--muted); font-size: 12px; }
 .recharts-cartesian-grid line, .recharts-polar-grid-angle line, .recharts-polar-grid-concentric path { stroke: var(--line); }
 
@@ -399,6 +440,11 @@ td:last-child { white-space: nowrap; }
 @keyframes chartFade {
   from { opacity: 0.72; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes chartLoad {
+  from { background-position: -240px 0, 0 0, 0 0; }
+  to { background-position: calc(100% + 240px) 0, 0 0, 0 0; }
 }
 
 @media (max-width: 1180px) {

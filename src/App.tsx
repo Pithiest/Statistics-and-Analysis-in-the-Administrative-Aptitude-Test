@@ -29,28 +29,8 @@ import {
   Upload,
   Wand2
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  Legend,
-  PolarAngleAxis,
-  PolarGrid,
-  PolarRadiusAxis,
-  Radar,
-  RadarChart,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from "recharts";
 import {
   DEFAULT_FORM,
   DEFAULT_SETTINGS,
@@ -99,6 +79,10 @@ const nav: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
 
 const SYNC_DEBOUNCE_MS = 10_000;
 const PULL_INTERVAL_MS = 120_000;
+const OverviewTrendChart = lazy(() => import("./Charts").then((module) => ({ default: module.OverviewTrendChart })));
+const ModuleRadarChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleRadarChart })));
+const ModuleTrendChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleTrendChart })));
+const SubTypeBarChart = lazy(() => import("./Charts").then((module) => ({ default: module.SubTypeBarChart })));
 
 export function App() {
   const loaded = useMemo(loadState, []);
@@ -174,6 +158,18 @@ export function App() {
     return () => window.clearInterval(id);
   }, [timerOn]);
 
+  useEffect(() => {
+    const loadCharts = () => {
+      void import("./Charts");
+    };
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(loadCharts, { timeout: 4000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = globalThis.setTimeout(loadCharts, 2500);
+    return () => globalThis.clearTimeout(id);
+  }, []);
+
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
@@ -226,8 +222,8 @@ export function App() {
       const nextSettings = normalizeSettings(next.settings);
       const currentSettings = normalizeSettings(settingsRef.current);
       const mergedSettings = nextSettings.updatedAt > currentSettings.updatedAt ? nextSettings : currentSettings;
-      setRecords(mergedRecords);
-      setSettings(mergedSettings);
+      if (!sameRecordList(recordsRef.current, mergedRecords)) setRecords(mergedRecords);
+      if (mergedSettings.updatedAt !== currentSettings.updatedAt) setSettings(mergedSettings);
       setLastSync(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
       if (upload && changeVersionRef.current === uploadVersion) dirtyRef.current = false;
       setSyncState(dirtyRef.current ? "pending" : "synced");
@@ -607,34 +603,17 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
       <section className="grid-two wide-left">
         <Panel title="14 天趋势" note="题量 / 正确率 / 配速">
           <ChartBox>
-            <ResponsiveContainer>
-              <AreaChart data={data.trend}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                <YAxis yAxisId="left" tickLine={false} axisLine={false} />
-                <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} />
-                <Tooltip formatter={chartFormatter} />
-                <Legend verticalAlign="top" height={28} />
-                <ReferenceLine yAxisId="right" y={settings.targetRate} stroke="#64748b" strokeDasharray="4 4" />
-                <Area yAxisId="left" type="monotone" dataKey="total" name="题量" stroke="#2563eb" fill="#2563eb22" />
-                <Line yAxisId="right" type="monotone" dataKey="rate" name="正确率" stroke="#0f766e" strokeWidth={2.4} dot={false} connectNulls />
-                <Line yAxisId="right" type="monotone" dataKey="pace" name="配速" stroke="#b45309" strokeWidth={2} dot={false} strokeDasharray="5 5" connectNulls />
-              </AreaChart>
-            </ResponsiveContainer>
+            <DeferredChart>
+              <OverviewTrendChart data={data.trend} targetRate={settings.targetRate} />
+            </DeferredChart>
           </ChartBox>
         </Panel>
         <Panel title="模块能力矩阵" note="按原模块统计">
           {data.total ? (
             <ChartBox>
-              <ResponsiveContainer>
-                <RadarChart data={radarData}>
-                  <PolarGrid />
-                  <PolarAngleAxis dataKey="module" />
-                  <PolarRadiusAxis angle={90} domain={[0, 100]} tickCount={5} />
-                  <Radar dataKey="正确率" stroke="#2563eb" fill="#2563eb" fillOpacity={0.24} />
-                  <Tooltip formatter={chartFormatter} />
-                </RadarChart>
-              </ResponsiveContainer>
+              <DeferredChart>
+                <ModuleRadarChart data={radarData} />
+              </DeferredChart>
             </ChartBox>
           ) : <Empty text="录入后生成模块矩阵。" />}
           <div className="matrix-note">
@@ -858,19 +837,9 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
         <Panel title={`${module} 趋势`} note="正确率与配速">
           {detail.total ? (
             <ChartBox>
-              <ResponsiveContainer>
-                <LineChart data={detail.trend}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                  <YAxis yAxisId="left" tickLine={false} axisLine={false} domain={[0, 100]} />
-                  <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} />
-                  <Tooltip formatter={chartFormatter} />
-                  <Legend verticalAlign="top" height={28} />
-                  <ReferenceLine yAxisId="left" y={settings.targetRate} stroke="#64748b" strokeDasharray="4 4" />
-                  <Line yAxisId="left" type="monotone" dataKey="rate" name="正确率" stroke="#2563eb" strokeWidth={2.6} dot={false} connectNulls />
-                  <Line yAxisId="right" type="monotone" dataKey="pace" name="配速" stroke="#b45309" strokeWidth={2.2} dot={false} strokeDasharray="5 5" connectNulls />
-                </LineChart>
-              </ResponsiveContainer>
+              <DeferredChart>
+                <ModuleTrendChart data={detail.trend} targetRate={settings.targetRate} />
+              </DeferredChart>
             </ChartBox>
           ) : <Empty text={emptyText} />}
         </Panel>
@@ -885,15 +854,9 @@ function Diagnosis({ records, settings, module, subType, range, setModule, setSu
         <Panel title="题型对比" note="按正确率从低到高">
           {detail.subTypes.length ? (
             <ChartBox>
-              <ResponsiveContainer>
-                <BarChart data={detail.subTypes} layout={detail.subTypes.length > 4 ? "vertical" : "horizontal"}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type={detail.subTypes.length > 4 ? "number" : "category"} dataKey={detail.subTypes.length > 4 ? undefined : "name"} tickLine={false} axisLine={false} />
-                  <YAxis type={detail.subTypes.length > 4 ? "category" : "number"} dataKey={detail.subTypes.length > 4 ? "name" : undefined} tickLine={false} axisLine={false} width={82} />
-                  <Tooltip formatter={chartFormatter} />
-                  <Bar dataKey="rate" name="正确率" fill="#2563eb" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <DeferredChart>
+                <SubTypeBarChart data={detail.subTypes} />
+              </DeferredChart>
             </ChartBox>
           ) : <Empty text="暂无题型数据。" />}
         </Panel>
@@ -1106,16 +1069,6 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
   );
 }
 
-function chartFormatter(value: unknown, name: unknown): [string, string] {
-  const label = String(name || "");
-  const raw = Array.isArray(value) ? value[0] : value;
-  if (raw === null || raw === undefined || raw === "") return ["--", label];
-  if (label.includes("正确率")) return [`${raw}%`, label];
-  if (label.includes("配速")) return [`${raw}s/题`, label];
-  if (label.includes("题量") || label.includes("样本")) return [`${raw}题`, label];
-  return [String(raw), label];
-}
-
 function Metric({ label, value, unit, icon }: { label: string; value: ReactNode; unit: string; icon: ReactNode }) {
   return <motion.div className="metric" whileHover={{ y: -3 }}><div><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>{icon}</motion.div>;
 }
@@ -1130,6 +1083,10 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 function ChartBox({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
   return <div className={compact ? "chart-box compact" : "chart-box"}>{children}</div>;
+}
+
+function DeferredChart({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<div className="chart-loading" aria-label="图表加载中"><i /></div>}>{children}</Suspense>;
 }
 
 function RecordCard({ record, onEdit, onDelete, action }: { record: TrainingRecord; onEdit: (record: TrainingRecord) => void; onDelete?: (record: TrainingRecord) => void; action?: ReactNode }) {
@@ -1195,6 +1152,14 @@ function syncHint(state: SyncState, spaceCode: string, lastSync: string) {
   if (state === "offline") return "联网后自动继续";
   if (state === "error") return "稍后会继续尝试";
   return "本机优先保存";
+}
+
+function sameRecordList(left: TrainingRecord[], right: TrainingRecord[]) {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => {
+    const other = right[index];
+    return Boolean(other) && item.id === other.id && item.updatedAt === other.updatedAt && item.deletedAt === other.deletedAt;
+  });
 }
 
 function formatTimer(seconds: number) {

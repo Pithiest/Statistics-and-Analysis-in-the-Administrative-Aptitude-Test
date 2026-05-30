@@ -1,11 +1,14 @@
-const CACHE_NAME = "pithiest-xingce-v7";
-const ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/pithiest-icon.svg"];
+const CACHE_PREFIX = "pithiest-xingce-";
+const CACHE_NAME = `${CACHE_PREFIX}v8`;
+const SHELL_URL = "/index.html";
+const SHELL_ASSETS = ["/", SHELL_URL, "/manifest.webmanifest", "/pithiest-icon.svg"];
+const NAVIGATION_TIMEOUT_MS = 3500;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(ASSETS))
+      .then((cache) => Promise.all(SHELL_ASSETS.map((url) => fetchAndCache(cache, url))))
       .then(() => self.skipWaiting())
   );
 });
@@ -14,34 +17,79 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
 
-self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
 
-  if (event.request.mode === "navigate") {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("/index.html", copy));
-          return response;
-        })
-        .catch(() => caches.match("/index.html"))
-    );
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  if (request.mode === "navigate") {
+    event.respondWith(networkFirstNavigation(request));
     return;
   }
 
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        return response;
-      })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/index.html")))
-  );
+  if (url.pathname.startsWith("/assets/") || url.pathname === "/manifest.webmanifest" || url.pathname === "/pithiest-icon.svg") {
+    event.respondWith(staleWhileRevalidate(request));
+  }
 });
+
+async function networkFirstNavigation(request) {
+  const cached = await caches.match(SHELL_URL);
+  const network = fetch(request)
+    .then(async (response) => {
+      if (isCacheable(response)) {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(SHELL_URL, response.clone());
+      }
+      return response;
+    })
+    .catch(() => cached || Response.error());
+
+  if (!cached) return network;
+
+  return Promise.race([
+    network,
+    new Promise((resolve) => {
+      setTimeout(() => resolve(cached), NAVIGATION_TIMEOUT_MS);
+    })
+  ]);
+}
+
+async function staleWhileRevalidate(request) {
+  const cached = await caches.match(request);
+  const network = fetch(request).then(async (response) => {
+    if (isCacheable(response)) {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, response.clone());
+    }
+    return response;
+  });
+  if (cached) {
+    network.catch(() => {});
+    return cached;
+  }
+  return network;
+}
+
+async function fetchAndCache(cache, url) {
+  try {
+    const response = await fetch(url, { cache: "reload" });
+    if (isCacheable(response)) await cache.put(url, response);
+  } catch {
+    // Best-effort warmup only. Failed optional assets must not block the new worker.
+  }
+}
+
+function isCacheable(response) {
+  return response && response.ok && response.type === "basic";
+}
