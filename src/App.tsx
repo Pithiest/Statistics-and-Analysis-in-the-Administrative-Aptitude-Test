@@ -1,4 +1,3 @@
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   BarChart3,
   CalendarDays,
@@ -115,7 +114,6 @@ export function App() {
   const debounceRef = useRef<number>();
 
   const data = useMemo(() => dashboard(records, settings), [records, settings]);
-  const reduceMotion = useReducedMotion();
   const currentRecord = editingId ? records.find((item) => item.id === editingId) : undefined;
 
   useEffect(() => {
@@ -418,15 +416,7 @@ export function App() {
           </div>
         </header>
 
-        <AnimatePresence mode="wait">
-          <motion.section
-            key={view}
-            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
-            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
-            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
-            transition={{ duration: reduceMotion ? 0.01 : 0.18, ease: [0.22, 1, 0.36, 1] }}
-            className="page"
-          >
+        <section key={view} className="page">
             {view === "today" && <Today data={data} settings={settings} onRecord={() => setView("record")} onReview={() => setView("review")} />}
             {view === "record" && (
               <RecordView
@@ -518,8 +508,7 @@ export function App() {
                 onImport={importBackup}
               />
             )}
-          </motion.section>
-        </AnimatePresence>
+        </section>
       </main>
 
       <nav className="mobile-nav">
@@ -1070,7 +1059,7 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
 }
 
 function Metric({ label, value, unit, icon }: { label: string; value: ReactNode; unit: string; icon: ReactNode }) {
-  return <motion.div className="metric" whileHover={{ y: -3 }}><div><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>{icon}</motion.div>;
+  return <div className="metric"><div><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>{icon}</div>;
 }
 
 function Panel({ title, note, children }: { title: string; note?: string; children: ReactNode }) {

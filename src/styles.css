@@ -197,10 +197,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 .panel, .metric, .record-card, .ledger-card {
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
-.panel:hover, .record-card:hover, .ledger-card:hover {
+.panel:hover, .metric:hover, .record-card:hover, .ledger-card:hover {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--blue) 26%, var(--line));
   box-shadow: 0 22px 54px rgba(15, 23, 42, 0.11);
+}
+.page {
+  animation: pageEnter 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .metric { min-height: 132px; padding: 20px; border-radius: 18px; display: flex; justify-content: space-between; gap: 14px; }
@@ -445,6 +448,11 @@ td:last-child { white-space: nowrap; }
 @keyframes chartLoad {
   from { background-position: -240px 0, 0 0, 0 0; }
   to { background-position: calc(100% + 240px) 0, 0 0, 0 0; }
+}
+
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 1180px) {
