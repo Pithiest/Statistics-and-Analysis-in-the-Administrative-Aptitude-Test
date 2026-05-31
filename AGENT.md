@@ -48,7 +48,7 @@ npm run preview
 ## 性能与稳定策略
 
 - 首屏只保留一个主 JS 入口；图表按可视区域懒加载。
-- `index.html` 保留内联 loading shell，避免慢网时白屏。
+- `index.html` 保留内联 loading shell，避免慢网时白屏；12 秒未进入应用时显示刷新恢复入口。
 - CSS 使用 preload/onload，JS 使用高优先级。
 - `sw.js` 使用 network-first 页面策略，并在安装时预热入口资源。
 - 本地数据读写必须 try/catch，避免隐私模式、配额满、存储被禁用时页面崩掉。
