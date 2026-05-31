@@ -29,12 +29,6 @@ export default defineConfig({
         return deps;
       }
     },
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          react: ["react", "react-dom", "react-dom/client", "scheduler"]
-        }
-      }
-    }
+    rollupOptions: {}
   }
 });
