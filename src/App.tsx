@@ -27,7 +27,7 @@ import {
   Trash2,
   Upload,
   Wand2
-} from "lucide-react";
+} from "./icons";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -112,25 +112,54 @@ export function App() {
   const lastPullRef = useRef(0);
   const changeVersionRef = useRef(0);
   const debounceRef = useRef<number>();
+  const recordsHydratedRef = useRef(false);
+  const settingsHydratedRef = useRef(false);
+  const codeHydratedRef = useRef(false);
 
   const data = useMemo(() => dashboard(records, settings), [records, settings]);
   const currentRecord = editingId ? records.find((item) => item.id === editingId) : undefined;
 
   useEffect(() => {
     recordsRef.current = records;
+    if (!recordsHydratedRef.current) {
+      recordsHydratedRef.current = true;
+      return;
+    }
     saveRecords(records);
   }, [records]);
 
   useEffect(() => {
     settingsRef.current = settings;
-    saveSettings(settings);
     document.documentElement.dataset.theme = settings.theme;
+    if (!settingsHydratedRef.current) {
+      settingsHydratedRef.current = true;
+      return;
+    }
+    saveSettings(settings);
   }, [settings]);
 
   useEffect(() => {
     codeRef.current = spaceCode;
+    if (!codeHydratedRef.current) {
+      codeHydratedRef.current = true;
+      return;
+    }
     saveSpaceCode(spaceCode);
   }, [spaceCode]);
+
+  useEffect(() => {
+    const persist = () => {
+      saveRecords(recordsRef.current);
+      saveSettings(settingsRef.current);
+      saveSpaceCode(codeRef.current);
+    };
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(persist, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = globalThis.setTimeout(persist, 2500);
+    return () => globalThis.clearTimeout(id);
+  }, []);
 
   useEffect(() => {
     if (!spaceCode) return undefined;
