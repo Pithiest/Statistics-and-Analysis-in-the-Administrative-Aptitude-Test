@@ -28,6 +28,11 @@
       .preload-bar i { display: block; width: 46%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2563eb, #0f766e); animation: preloadMove 1.15s ease-in-out infinite alternate; }
       .preload-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; color: #667085; font-size: 12px; font-weight: 850; }
       .preload-meta span { padding: 6px 10px; border: 1px solid rgba(148, 163, 184, 0.32); border-radius: 999px; background: rgba(255, 255, 255, 0.5); }
+      .preload-slow { display: none; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding: 12px 14px; border: 1px solid rgba(37, 99, 235, 0.18); border-radius: 16px; background: rgba(37, 99, 235, 0.08); color: #475467; font-size: 13px; font-weight: 800; line-height: 1.5; }
+      .preload-shell.is-slow .preload-slow { display: flex; }
+      .preload-slow button { flex: 0 0 auto; min-height: 34px; border: 0; border-radius: 999px; padding: 0 14px; background: #111827; color: white; font: inherit; cursor: pointer; }
+      @media (max-width: 520px) { .preload-slow { align-items: flex-start; flex-direction: column; } .preload-slow button { width: 100%; } }
+      @media (prefers-color-scheme: dark) { .preload-slow { color: #b8c4d8; background: rgba(37, 99, 235, 0.14); } .preload-slow button { background: #edf3ff; color: #0b111b; } }
       @keyframes preloadMove { from { transform: translateX(-12%); } to { transform: translateX(128%); } }
       @media (prefers-reduced-motion: reduce) { .preload-bar i { animation: none; width: 100%; } }
     </style>
@@ -45,9 +50,34 @@
             <span>自动同步</span>
             <span>离线可用</span>
           </div>
+          <div class="preload-slow" role="status">
+            <span>网络偏慢，可继续等待；如果一直停在这里，刷新会清理旧缓存。</span>
+            <button id="preload-retry" type="button">刷新恢复</button>
+          </div>
         </section>
       </main>
     </div>
+    <script>
+      (() => {
+        window.setTimeout(() => {
+          const shell = document.querySelector(".preload-shell");
+          if (shell) shell.classList.add("is-slow");
+        }, 12000);
+
+        document.addEventListener("click", async (event) => {
+          if (!(event.target instanceof HTMLElement) || event.target.id !== "preload-retry") return;
+          try {
+            if ("caches" in window) {
+              const keys = await caches.keys();
+              await Promise.all(keys.filter((key) => key.startsWith("pithiest-xingce-")).map((key) => caches.delete(key)));
+            }
+          } catch {
+            // Reload anyway; the app also has runtime recovery after hydration.
+          }
+          window.location.reload();
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
