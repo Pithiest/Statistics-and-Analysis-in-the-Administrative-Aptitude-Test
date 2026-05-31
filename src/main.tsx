@@ -5,6 +5,7 @@ import { App } from "./App";
 import "./styles.css";
 
 type ErrorBoundaryState = { failed: boolean };
+const runtimeReloadMarks = new Set<string>();
 
 class RootErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
   state: ErrorBoundaryState = { failed: false };
@@ -112,9 +113,29 @@ function registerServiceWorker() {
 
 function reloadAfterRuntimeFailure(reason: string, force = false) {
   const key = `pithiest-runtime-reload-${reason}`;
-  if (!force && sessionStorage.getItem(key)) return;
-  sessionStorage.setItem(key, "1");
-  clearRuntimeCaches().finally(() => window.location.reload());
+  if (!force && hasRuntimeReloadMark(key)) return;
+  markRuntimeReload(key);
+  clearRuntimeCaches()
+    .catch(() => {})
+    .finally(() => window.location.reload());
+}
+
+function hasRuntimeReloadMark(key: string) {
+  if (runtimeReloadMarks.has(key)) return true;
+  try {
+    return sessionStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markRuntimeReload(key: string) {
+  runtimeReloadMarks.add(key);
+  try {
+    sessionStorage.setItem(key, "1");
+  } catch {
+    return;
+  }
 }
 
 async function clearRuntimeCaches() {

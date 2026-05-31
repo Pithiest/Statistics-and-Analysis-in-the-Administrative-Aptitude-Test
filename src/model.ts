@@ -212,6 +212,8 @@ const OLD_SETTINGS_KEYS = [
   "xingce_v20_settings"
 ];
 const OLD_CLOUD_KEYS = ["pithiest_xingce_cloud_v5", "pithiest_xingce_cloud_v4", "xingce_react_cloud_v2", "xingce_v20_cloud"];
+let storageUnavailable = false;
+const storageWarnings = new Set<string>();
 
 export const DEFAULT_SETTINGS: Settings = {
   dailyGoal: 80,
@@ -323,17 +325,17 @@ export function loadState() {
 }
 
 export function saveRecords(records: TrainingRecord[]) {
-  localStorage.setItem(KEYS.records, JSON.stringify(normalizeRecords(records)));
+  writeJson(KEYS.records, normalizeRecords(records));
 }
 
 export function saveSettings(settings: Settings) {
-  localStorage.setItem(KEYS.settings, JSON.stringify(normalizeSettings(settings)));
+  writeJson(KEYS.settings, normalizeSettings(settings));
 }
 
 export function saveSpaceCode(spaceCode: string) {
   const code = normalizeCode(spaceCode);
-  if (code) localStorage.setItem(KEYS.cloud, JSON.stringify({ spaceCode: code }));
-  else localStorage.removeItem(KEYS.cloud);
+  if (code) writeJson(KEYS.cloud, { spaceCode: code });
+  else removeStorage(KEYS.cloud);
 }
 
 export function normalizeRecords(input: unknown): TrainingRecord[] {
@@ -865,10 +867,54 @@ function daysAgo(offset: number) {
 
 function readJson(key: string) {
   try {
-    return JSON.parse(localStorage.getItem(key) || "null");
-  } catch {
+    const value = readStorage(key);
+    return value ? JSON.parse(value) : null;
+  } catch (error) {
+    warnStorage("read", key, error);
     return null;
   }
+}
+
+function readStorage(key: string) {
+  if (storageUnavailable) return null;
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    storageUnavailable = true;
+    warnStorage("read", key, error);
+    return null;
+  }
+}
+
+function writeJson(key: string, value: unknown) {
+  if (storageUnavailable) return false;
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    storageUnavailable = true;
+    warnStorage("write", key, error);
+    return false;
+  }
+}
+
+function removeStorage(key: string) {
+  if (storageUnavailable) return false;
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch (error) {
+    storageUnavailable = true;
+    warnStorage("remove", key, error);
+    return false;
+  }
+}
+
+function warnStorage(action: string, key: string, error: unknown) {
+  const id = `${action}:${key}`;
+  if (storageWarnings.has(id)) return;
+  storageWarnings.add(id);
+  if (typeof console !== "undefined") console.warn("[pithiest-storage]", action, key, error);
 }
 
 function firstLegacy(keys: string[]) {
