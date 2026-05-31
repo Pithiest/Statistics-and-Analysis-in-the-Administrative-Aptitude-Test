@@ -1,7 +1,7 @@
 {
   "name": "xingce-training-cockpit",
   "private": true,
-  "version": "3.1.5",
+  "version": "3.1.6",
   "type": "module",
   "scripts": {
     "dev": "node scripts/prepare-source.mjs && vite --host 127.0.0.1",
