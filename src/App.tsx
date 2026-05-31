@@ -1053,7 +1053,17 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
   onImport: (file?: File) => void;
 }) {
   const [draft, setDraft] = useState(spaceCode);
+  const [perf, setPerf] = useState<PerformanceSnapshot>(() => collectPerformanceSnapshot());
   useEffect(() => setDraft(spaceCode), [spaceCode]);
+  useEffect(() => {
+    const update = () => setPerf(collectPerformanceSnapshot());
+    const id = window.setTimeout(update, 800);
+    window.addEventListener("load", update, { once: true });
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener("load", update);
+    };
+  }, []);
   return (
     <div className="stack">
       <section className="grid-two">
@@ -1096,6 +1106,14 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
       </section>
 
       <section className="grid-two">
+        <Panel title="访问自检" note={perf.verdict}>
+          <div className="perf-grid">
+            <div><span>首屏绘制</span><strong>{perf.fcp ? `${perf.fcp}ms` : "--"}</strong></div>
+            <div><span>HTML 响应</span><strong>{perf.html ? `${perf.html}ms` : "--"}</strong></div>
+            <div><span>最慢资源</span><strong>{perf.slowestMs ? `${perf.slowestMs}ms` : "--"}</strong><small>{perf.slowestName || "等待采样"}</small></div>
+            <div><span>本机缓存</span><strong>{perf.swControlled ? "已接管" : "准备中"}</strong></div>
+          </div>
+        </Panel>
         <Panel title="版本">
           <div className="version-panel">
             <strong>行测数据舱</strong>
@@ -1106,6 +1124,38 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
       </section>
     </div>
   );
+}
+
+type PerformanceSnapshot = {
+  fcp: number;
+  html: number;
+  slowestMs: number;
+  slowestName: string;
+  swControlled: boolean;
+  verdict: string;
+};
+
+function collectPerformanceSnapshot(): PerformanceSnapshot {
+  const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+  const paint = performance.getEntriesByName("first-contentful-paint")[0];
+  const resources = performance
+    .getEntriesByType("resource")
+    .filter((entry) => entry.name.startsWith(location.origin) && /\/assets\/.+\.(js|css)$/.test(entry.name))
+    .sort((a, b) => b.duration - a.duration);
+  const slowest = resources[0];
+  const html = navigation ? Math.max(0, Math.round(navigation.responseEnd - navigation.startTime)) : 0;
+  const fcp = paint ? Math.round(paint.startTime) : 0;
+  const slowestMs = slowest ? Math.round(slowest.duration) : 0;
+  const slowestName = slowest ? slowest.name.split("/").pop() || "" : "";
+  const networkSlow = html > 3000 || slowestMs > 5000;
+  return {
+    fcp,
+    html,
+    slowestMs,
+    slowestName,
+    swControlled: Boolean(navigator.serviceWorker?.controller),
+    verdict: networkSlow ? "当前访问链路偏慢，主要看域名/CDN资源耗时" : "访问链路正常，后续刷新会走本机缓存"
+  };
 }
 
 function Metric({ label, value, unit, icon }: { label: string; value: ReactNode; unit: string; icon: ReactNode }) {

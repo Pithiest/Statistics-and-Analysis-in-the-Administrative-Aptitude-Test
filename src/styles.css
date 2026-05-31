@@ -443,6 +443,16 @@ td:last-child { white-space: nowrap; }
 }
 .stability-list strong { font-size: 13px; }
 .stability-list span { color: var(--muted); font-size: 13px; font-weight: 800; line-height: 1.45; }
+.perf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.perf-grid div {
+  min-height: 82px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--panel-solid) 78%, transparent);
+}
+.perf-grid span, .perf-grid small { display: block; color: var(--muted); font-size: 12px; font-weight: 850; line-height: 1.4; }
+.perf-grid strong { display: block; margin: 8px 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 24px; line-height: 1; letter-spacing: 0; }
 .toast { position: fixed; right: 26px; bottom: 26px; z-index: 60; max-width: 360px; padding: 14px 18px; border-radius: 14px; color: #fff; font-weight: 900; background: #111827; box-shadow: var(--shadow); }
 .spin { animation: spin 0.9s linear infinite; }
 
@@ -541,6 +551,7 @@ td:last-child { white-space: nowrap; }
   .card-actions { justify-content: flex-start; }
   .space-row { grid-template-columns: 1fr; }
   .stability-list div { grid-template-columns: 1fr; gap: 4px; }
+  .perf-grid { grid-template-columns: 1fr; }
   .bars div { grid-template-columns: 82px minmax(0, 1fr) 48px; }
   .chart-box { height: 238px; }
 }
