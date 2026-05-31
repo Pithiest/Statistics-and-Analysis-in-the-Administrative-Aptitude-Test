@@ -185,18 +185,6 @@ export function App() {
     return () => window.clearInterval(id);
   }, [timerOn]);
 
-  useEffect(() => {
-    const loadCharts = () => {
-      void import("./Charts");
-    };
-    if ("requestIdleCallback" in window) {
-      const id = window.requestIdleCallback(loadCharts, { timeout: 4000 });
-      return () => window.cancelIdleCallback(id);
-    }
-    const id = globalThis.setTimeout(loadCharts, 2500);
-    return () => globalThis.clearTimeout(id);
-  }, []);
-
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
@@ -1100,7 +1088,7 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
           <div className="stability-list">
             <div><strong>首屏</strong><span>核心资源未下载完时先显示轻量加载壳，避免白屏等待。</span></div>
             <div><strong>同步</strong><span>真实数据变化后 10 秒合并上传，打开页面和恢复网络时节流拉取。</span></div>
-            <div><strong>缓存</strong><span>页面走新版优先，旧资源异常会自动清理缓存并恢复。</span></div>
+            <div><strong>缓存</strong><span>页面走新版优先，核心资源会在后台预热，旧资源异常会自动恢复。</span></div>
           </div>
         </Panel>
       </section>
@@ -1175,7 +1163,33 @@ function ChartBox({ children, compact = false }: { children: ReactNode; compact?
 }
 
 function DeferredChart({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<div className="chart-loading" aria-label="图表加载中"><i /></div>}>{children}</Suspense>;
+  const [ready, setReady] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (ready) return undefined;
+    const node = ref.current;
+    if (!node || !("IntersectionObserver" in window)) {
+      setReady(true);
+      return undefined;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setReady(true);
+        observer.disconnect();
+      },
+      { rootMargin: "360px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [ready]);
+
+  return (
+    <div ref={ref} className="deferred-chart">
+      {ready ? <Suspense fallback={<div className="chart-loading" aria-label="图表加载中"><i /></div>}>{children}</Suspense> : <div className="chart-loading" aria-label="图表等待可见"><i /></div>}
+    </div>
+  );
 }
 
 function RecordCard({ record, onEdit, onDelete, action }: { record: TrainingRecord; onEdit: (record: TrainingRecord) => void; onDelete?: (record: TrainingRecord) => void; action?: ReactNode }) {

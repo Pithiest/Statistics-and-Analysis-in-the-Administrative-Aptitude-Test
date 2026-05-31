@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "pithiest-xingce-";
-const CACHE_NAME = `${CACHE_PREFIX}v9`;
+const CACHE_NAME = `${CACHE_PREFIX}v10`;
 const SHELL_URL = "/index.html";
 const SHELL_ASSETS = ["/", SHELL_URL, "/manifest.webmanifest", "/pithiest-icon.svg"];
 const NAVIGATION_TIMEOUT_MS = 1200;
@@ -8,7 +8,7 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => Promise.all(SHELL_ASSETS.map((url) => fetchAndCache(cache, url))))
+      .then((cache) => Promise.all(SHELL_ASSETS.map((url) => fetchAndCache(cache, url))).then(() => warmEntryAssets(cache)))
       .then(() => self.skipWaiting())
   );
 });
@@ -87,6 +87,19 @@ async function fetchAndCache(cache, url) {
     if (isCacheable(response)) await cache.put(url, response);
   } catch {
     // Best-effort warmup only. Failed optional assets must not block the new worker.
+  }
+}
+
+async function warmEntryAssets(cache) {
+  try {
+    const response = await fetch(SHELL_URL, { cache: "reload" });
+    if (!isCacheable(response)) return;
+    await cache.put(SHELL_URL, response.clone());
+    const html = await response.text();
+    const urls = [...new Set([...html.matchAll(/["'](\/assets\/[^"']+)["']/g)].map((match) => match[1]))];
+    await Promise.all(urls.map((url) => fetchAndCache(cache, url)));
+  } catch {
+    // Navigation remains usable even when background warmup is blocked by the network.
   }
 }
 
