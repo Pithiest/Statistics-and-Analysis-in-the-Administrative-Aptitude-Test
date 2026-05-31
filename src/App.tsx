@@ -1071,7 +1071,7 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
           <div className="version-panel">
             <strong>行测数据舱</strong>
             <span>本机保存，空间码自动同步，支持旧版 JSON 导入。</span>
-            <small>xc.Pithiest.cn</small>
+            <small>xc.Pithiest.cn · Pithiest巨献</small>
           </div>
         </Panel>
       </section>
