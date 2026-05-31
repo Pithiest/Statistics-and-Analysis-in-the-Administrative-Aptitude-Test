@@ -1,8 +1,8 @@
 const CACHE_PREFIX = "pithiest-xingce-";
-const CACHE_NAME = `${CACHE_PREFIX}v8`;
+const CACHE_NAME = `${CACHE_PREFIX}v9`;
 const SHELL_URL = "/index.html";
 const SHELL_ASSETS = ["/", SHELL_URL, "/manifest.webmanifest", "/pithiest-icon.svg"];
-const NAVIGATION_TIMEOUT_MS = 3500;
+const NAVIGATION_TIMEOUT_MS = 1200;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

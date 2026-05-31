@@ -36,12 +36,31 @@ window.addEventListener("vite:preloadError", (event) => {
 
 window.addEventListener("error", (event) => {
   const message = String(event.message || "");
-  if (message.includes("dynamically imported module") || message.includes("Failed to fetch")) {
+  if (isRuntimeLoadFailure(message)) {
     reloadAfterRuntimeFailure("chunk");
   }
 });
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason instanceof Error ? event.reason.message : String(event.reason || "");
+  if (isRuntimeLoadFailure(reason)) {
+    event.preventDefault();
+    reloadAfterRuntimeFailure("chunk");
+  }
+});
+
+function isRuntimeLoadFailure(message: string) {
+  return (
+    message.includes("dynamically imported module") ||
+    message.includes("Failed to fetch dynamically imported module") ||
+    message.includes("Importing a module script failed")
+  );
+}
+
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Missing app root");
+
+ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <RootErrorBoundary>
       <App />

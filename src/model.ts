@@ -524,16 +524,11 @@ export async function syncSpace(spaceCode: string, records: TrainingRecord[], se
   if (!code) return { records, settings };
   const shouldUpload = options.upload !== false;
   const hashes = await candidateHashes(code);
-  let remoteRow: { payload: string; updated_at: string; space_hash: string } | null = null;
-  for (const hash of hashes) {
-    const rows = await cloudFetch<Array<{ payload: string; updated_at: string; space_hash: string }>>(
-      `/rest/v1/xingce_sync?space_hash=eq.${encodeURIComponent(hash)}&select=payload,updated_at,space_hash&limit=1`
-    );
-    if (rows[0]) {
-      remoteRow = rows[0];
-      break;
-    }
-  }
+  const hashFilter = hashes.map(encodeURIComponent).join(",");
+  const rows = await cloudFetch<Array<{ payload: string; updated_at: string; space_hash: string }>>(
+    `/rest/v1/xingce_sync?space_hash=in.(${hashFilter})&select=payload,updated_at,space_hash&order=updated_at.desc&limit=1`
+  );
+  const remoteRow = rows[0] || null;
   const remote = remoteRow ? await parsePayload(remoteRow.payload, code) : null;
   const mergedRecords = mergeRecords(records, remote?.records || []);
   const mergedSettings = mergeSettings(settings, remote?.settings);
@@ -692,18 +687,25 @@ async function parsePayload(payload: string, code: string) {
 }
 
 async function cloudFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${SUPABASE_URL}${path}`, {
-    ...init,
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-      ...(init.headers || {})
-    }
-  });
-  if (!response.ok) throw new Error(await response.text());
-  const text = await response.text();
-  return text ? (JSON.parse(text) as T) : (undefined as T);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${SUPABASE_URL}${path}`, {
+      ...init,
+      signal: init.signal || controller.signal,
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": "application/json",
+        ...(init.headers || {})
+      }
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const text = await response.text();
+    return text ? (JSON.parse(text) as T) : (undefined as T);
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 const encoder = new TextEncoder();

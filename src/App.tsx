@@ -173,6 +173,17 @@ export function App() {
     window.setTimeout(() => setToast(""), 2400);
   }
 
+  function navigate(next: ViewId) {
+    if (next === view) return;
+    const update = () => setView(next);
+    const doc = document as Document & { startViewTransition?: (callback: () => void) => void };
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && doc.startViewTransition) {
+      doc.startViewTransition(update);
+      return;
+    }
+    update();
+  }
+
   function scheduleSync() {
     changeVersionRef.current += 1;
     dirtyRef.current = true;
@@ -273,7 +284,7 @@ export function App() {
       tags: record.tags.join(" "),
       note: record.note
     });
-    setView("record");
+    navigate("record");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -379,7 +390,7 @@ export function App() {
         </div>
         <nav className="side-nav">
           {nav.map((item) => (
-            <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>
+            <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
               {item.icon}
               <span>{item.label}</span>
             </button>
@@ -407,17 +418,17 @@ export function App() {
             <button className="icon-btn" onClick={() => updateSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark" }, false)} title="切换主题">
               {settings.theme === "dark" ? <Sun /> : <Moon />}
             </button>
-            <button className="soft-btn" onClick={() => setView("settings")}>
+            <button className="soft-btn" onClick={() => navigate("settings")}>
               <KeyRound /> 空间码
             </button>
-            <button className="primary-btn" onClick={() => setView("record")}>
+            <button className="primary-btn" onClick={() => navigate("record")}>
               <Plus /> 录入
             </button>
           </div>
         </header>
 
         <section key={view} className="page">
-            {view === "today" && <Today data={data} settings={settings} onRecord={() => setView("record")} onReview={() => setView("review")} />}
+            {view === "today" && <Today data={data} settings={settings} onRecord={() => navigate("record")} onReview={() => navigate("review")} />}
             {view === "record" && (
               <RecordView
                 form={form}
@@ -513,7 +524,7 @@ export function App() {
 
       <nav className="mobile-nav">
         {nav.map((item) => (
-          <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>
+          <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
             {item.icon}
             <span>{item.label}</span>
           </button>
@@ -1046,6 +1057,16 @@ function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, syncStat
             <label className="soft-btn file-btn"><Upload /> 导入 JSON<input type="file" accept="application/json,.json" onChange={(event) => onImport(event.target.files?.[0])} /></label>
           </div>
         </Panel>
+        <Panel title="稳定性">
+          <div className="stability-list">
+            <div><strong>首屏</strong><span>核心资源未下载完时先显示轻量加载壳，避免白屏等待。</span></div>
+            <div><strong>同步</strong><span>真实数据变化后 10 秒合并上传，打开页面和恢复网络时节流拉取。</span></div>
+            <div><strong>缓存</strong><span>页面走新版优先，旧资源异常会自动清理缓存并恢复。</span></div>
+          </div>
+        </Panel>
+      </section>
+
+      <section className="grid-two">
         <Panel title="版本">
           <div className="version-panel">
             <strong>行测数据舱</strong>

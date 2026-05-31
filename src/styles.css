@@ -41,6 +41,10 @@ body {
     linear-gradient(315deg, rgba(15, 118, 110, 0.08), transparent 34%),
     var(--bg);
 }
+::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: 0.22s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
 button, input, select, textarea { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
 svg { width: 20px; height: 20px; stroke-width: 2.2; flex: 0 0 auto; }
@@ -124,7 +128,7 @@ svg { width: 20px; height: 20px; stroke-width: 2.2; flex: 0 0 auto; }
 .topbar h1 { margin: 0; font-size: 44px; line-height: 1.04; letter-spacing: 0; }
 .top-actions, .button-row, .hero-actions, .card-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .page, .stack { display: grid; gap: 20px; min-width: 0; }
-.page { will-change: opacity, transform; }
+.page { will-change: opacity, transform; content-visibility: auto; contain-intrinsic-size: 900px; }
 .side-stack { display: grid; gap: 20px; align-self: start; }
 
 .primary-btn, .soft-btn, .icon-btn, .mini-btn {
@@ -204,6 +208,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 }
 .page {
   animation: pageEnter 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.page > .stack > .panel,
+.page > .stack > .grid-two,
+.page > .stack > .metric-grid,
+.page > .stack > .focus-strip,
+.page > .stack > .form-layout,
+.page > .panel {
+  animation: sectionRise 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .metric { min-height: 132px; padding: 20px; border-radius: 18px; display: flex; justify-content: space-between; gap: 14px; }
@@ -417,6 +429,20 @@ td:last-child { white-space: nowrap; }
 .version-panel { display: grid; gap: 8px; color: var(--muted); font-weight: 800; }
 .version-panel strong { color: var(--text); font-size: 18px; }
 .version-panel small { color: color-mix(in srgb, var(--muted) 66%, transparent); font-size: 12px; }
+.stability-list { display: grid; gap: 10px; }
+.stability-list div {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-solid) 78%, transparent);
+}
+.stability-list strong { font-size: 13px; }
+.stability-list span { color: var(--muted); font-size: 13px; font-weight: 800; line-height: 1.45; }
 .toast { position: fixed; right: 26px; bottom: 26px; z-index: 60; max-width: 360px; padding: 14px 18px; border-radius: 14px; color: #fff; font-weight: 900; background: #111827; box-shadow: var(--shadow); }
 .spin { animation: spin 0.9s linear infinite; }
 
@@ -453,6 +479,11 @@ td:last-child { white-space: nowrap; }
 @keyframes pageEnter {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes sectionRise {
+  from { opacity: 0; transform: translateY(10px) scale(0.998); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @media (max-width: 1180px) {
@@ -509,6 +540,7 @@ td:last-child { white-space: nowrap; }
   .record-card b, .record-card .card-actions { grid-column: 2; }
   .card-actions { justify-content: flex-start; }
   .space-row { grid-template-columns: 1fr; }
+  .stability-list div { grid-template-columns: 1fr; gap: 4px; }
   .bars div { grid-template-columns: 82px minmax(0, 1fr) 48px; }
   .chart-box { height: 238px; }
 }
