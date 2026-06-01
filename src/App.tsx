@@ -61,7 +61,6 @@ import {
   stampSettings,
   subTypeOptions,
   suggestedMinutes,
-  syncSpace,
   templateFromForm,
   today
 } from "./model";
@@ -267,6 +266,7 @@ export function App() {
     syncingRef.current = true;
     if (!options.quiet) setSyncState("syncing");
     try {
+      const { syncSpace } = await import("./cloudSync");
       const next = await syncSpace(code, recordsRef.current, settingsRef.current, { upload });
       const mergedRecords = normalizeRecords([...next.records, ...recordsRef.current]);
       const nextSettings = normalizeSettings(next.settings);
