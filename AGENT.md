@@ -49,6 +49,7 @@ npm run preview
 
 - 首屏只保留一个主 JS 入口；图表按可视区域懒加载。
 - React 首帧先用轻量默认状态渲染，再在下一帧读取本机数据，避免大体量 `localStorage` 阻塞首屏。
+- Supabase 同步、PBKDF2 和 AES 加密逻辑放在 `src/cloudSync.ts`，只有设置空间码并实际同步时才动态加载。
 - `index.html` 保留内联 loading shell，避免慢网时白屏；12 秒未进入应用时显示刷新恢复入口。
 - CSS 使用 preload/onload，JS 使用高优先级。
 - `sw.js` 使用 network-first 页面策略，并在安装时预热入口资源。
