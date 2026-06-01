@@ -51,6 +51,7 @@ npm run preview
 - React 首帧先用轻量默认状态渲染，再在下一帧读取本机数据，避免大体量 `localStorage` 阻塞首屏。
 - Supabase 同步、PBKDF2 和 AES 加密逻辑放在 `src/cloudSync.ts`，只有设置空间码并实际同步时才动态加载。
 - `index.html` 保留内联 loading shell，避免慢网时白屏；12 秒未进入应用时显示刷新恢复入口。
+- `vercel.json` 对 `/` 和 `/index.html` 使用短时 `CDN-Cache-Control`，浏览器仍保持 `max-age=0`，兼顾首访速度和上线更新。
 - CSS 使用 preload/onload，JS 使用高优先级。
 - `sw.js` 使用 network-first 页面策略，并在安装时预热入口资源。
 - 本地数据读写必须 try/catch，避免隐私模式、配额满、存储被禁用时页面崩掉。
