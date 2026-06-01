@@ -48,6 +48,7 @@ npm run preview
 ## 性能与稳定策略
 
 - 首屏只保留一个主 JS 入口；图表按可视区域懒加载。
+- 非首屏业务页放在 `src/Views.tsx`，录入、诊断、复盘、台账、设置点击后才加载。
 - React 首帧先用轻量默认状态渲染，再在下一帧读取本机数据，避免大体量 `localStorage` 阻塞首屏。
 - Supabase 同步、PBKDF2 和 AES 加密逻辑放在 `src/cloudSync.ts`，只有设置空间码并实际同步时才动态加载。
 - `index.html` 保留内联 loading shell，避免慢网时白屏；12 秒未进入应用时显示刷新恢复入口。
