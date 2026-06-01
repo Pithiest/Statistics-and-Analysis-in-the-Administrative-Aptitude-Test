@@ -257,6 +257,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 .grid-two.wide-left { grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr); }
 .form-layout { grid-template-columns: minmax(0, 1fr) 360px; align-items: start; }
 .panel { border-radius: 18px; padding: 20px; min-width: 0; overflow: hidden; }
+.route-loading { min-height: 180px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-weight: 900; }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
 .panel h3 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: 0; }
 .panel-head span { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 800; }
