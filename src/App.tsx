@@ -82,14 +82,14 @@ const OverviewTrendChart = lazy(() => import("./Charts").then((module) => ({ def
 const ModuleRadarChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleRadarChart })));
 const ModuleTrendChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleTrendChart })));
 const SubTypeBarChart = lazy(() => import("./Charts").then((module) => ({ default: module.SubTypeBarChart })));
+type CoverageData = ReturnType<typeof dashboard>["coverage"];
 
 export function App() {
-  const loaded = useMemo(loadState, []);
   const [view, setView] = useState<ViewId>("today");
-  const [records, setRecords] = useState<TrainingRecord[]>(loaded.records);
-  const [settings, setSettings] = useState<Settings>(loaded.settings);
-  const [spaceCode, setSpaceCode] = useState(loaded.spaceCode);
-  const [syncState, setSyncState] = useState<SyncState>(loaded.spaceCode ? "syncing" : "local");
+  const [records, setRecords] = useState<TrainingRecord[]>([]);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [spaceCode, setSpaceCode] = useState("");
+  const [syncState, setSyncState] = useState<SyncState>("local");
   const [lastSync, setLastSync] = useState("");
   const [toast, setToast] = useState("");
   const [form, setForm] = useState<EntryForm>({ ...DEFAULT_FORM, date: today() });
@@ -115,6 +115,30 @@ export function App() {
   const recordsHydratedRef = useRef(false);
   const settingsHydratedRef = useRef(false);
   const codeHydratedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId = 0;
+    const hydrate = () => {
+      if (cancelled) return;
+      const loaded = loadState();
+      recordsRef.current = loaded.records;
+      settingsRef.current = loaded.settings;
+      codeRef.current = loaded.spaceCode;
+      setRecords(loaded.records);
+      setSettings(loaded.settings);
+      setSpaceCode(loaded.spaceCode);
+      setSyncState(loaded.spaceCode ? "syncing" : "local");
+    };
+    const frameId = window.requestAnimationFrame(() => {
+      timeoutId = window.setTimeout(hydrate, 0);
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
 
   const data = useMemo(() => dashboard(records, settings), [records, settings]);
   const currentRecord = editingId ? records.find((item) => item.id === editingId) : undefined;
@@ -559,11 +583,15 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
   const rateGap = data.todayTotal ? Math.max(0, settings.targetRate - data.todayRate) : 0;
   const heroTitle = !data.total
     ? "先建立第一条训练记录"
+    : !data.todayTotal
+      ? "今天还没记录训练"
     : remaining
       ? `今天还差 ${remaining} 题`
       : "今日题量已达标";
   const heroDetail = !data.total
     ? "录入一组真实训练后，系统会开始判断题量、正确率、错因和配速。"
+    : !data.todayTotal
+      ? data.coverage.nextPlan[0] || "先补一组短训练，再看今天的正确率和配速。"
     : rateGap
       ? `今日正确率 ${data.todayRate}%，距离目标还差 ${rateGap} 个点。`
       : `今日正确率 ${data.todayRate}%，继续保持复盘节奏。`;
@@ -617,6 +645,15 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
         <Metric label="最慢模块" value={data.slow?.short || "--"} unit={data.slow?.pace ? `${data.slow.pace}s/题` : "暂无样本"} icon={<Clock3 />} />
       </section>
 
+      <section className="grid-two plan-grid">
+        <Panel title="下一步学习计划" note={`均衡指数 ${data.coverage.balanceScore}/100`}>
+          <StudyPlan coverage={data.coverage} />
+        </Panel>
+        <Panel title="题型覆盖" note="题量均衡 / 久未训练">
+          <CoverageBoard coverage={data.coverage} />
+        </Panel>
+      </section>
+
       <section className="grid-two wide-left">
         <Panel title="14 天趋势" note="题量 / 正确率 / 配速">
           <ChartBox>
@@ -665,6 +702,46 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
           ))}
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function StudyPlan({ coverage }: { coverage: CoverageData }) {
+  return (
+    <div className="study-plan">
+      <div className="plan-score">
+        <span>覆盖均衡</span>
+        <strong>{coverage.balanceScore}</strong>
+        <small>满分 100</small>
+      </div>
+      <ol>
+        {coverage.nextPlan.map((item) => <li key={item}>{item}</li>)}
+      </ol>
+    </div>
+  );
+}
+
+function CoverageBoard({ coverage }: { coverage: CoverageData }) {
+  const undertrained = coverage.undertrained.slice(0, 4);
+  const stale = coverage.stale.slice(0, 4);
+  return (
+    <div className="coverage-board">
+      <CoverageColumn title="题量偏少" rows={undertrained} mode="total" />
+      <CoverageColumn title="久未训练" rows={stale} mode="stale" />
+    </div>
+  );
+}
+
+function CoverageColumn({ title, rows, mode }: { title: string; rows: CoverageData["items"]; mode: "total" | "stale" }) {
+  return (
+    <div className="coverage-column">
+      <span>{title}</span>
+      {rows.length ? rows.map((item) => (
+        <div key={`${title}-${item.key}`} className="coverage-item">
+          <b>{item.moduleShort} · {item.subType}</b>
+          <small>{mode === "total" ? `${item.total} 题` : item.lastDate ? `${item.daysSince} 天未做` : "从未记录"}</small>
+        </div>
+      )) : <Empty text="暂时没有明显缺口。" />}
     </div>
   );
 }

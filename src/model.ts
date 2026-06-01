@@ -448,6 +448,7 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
   const weak = moduleStats.filter((item) => item.total > 0).sort((a, b) => a.rate - b.rate || b.wrong - a.wrong)[0];
   const slow = moduleStats.filter((item) => item.total > 0 && item.pace > 0).sort((a, b) => b.pace - a.pace)[0];
   const reasons = aggregateWrong(rows, (item) => item.errorReason).filter((item) => item.name !== "无").slice(0, 7);
+  const coverage = trainingCoverage(rows, settings);
   return {
     rows,
     total,
@@ -469,7 +470,8 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
     weak,
     slow,
     goalDone: Math.min(100, percent(todayTotal, settings.dailyGoal)),
-    recommendations: recommendations({ total, todayTotal, pending, weak, slow, reasons }, settings)
+    coverage,
+    recommendations: recommendations({ total, todayTotal, pending, weak, slow, reasons, coverage }, settings)
   };
 }
 
@@ -827,15 +829,77 @@ function recommendations(data: {
   weak?: { short: string; rate: number };
   slow?: { short: string; pace: number };
   reasons: Array<{ name: string; value: number }>;
+  coverage: ReturnType<typeof trainingCoverage>;
 }, settings: Settings) {
   if (!data.total) return ["先录入一组真实训练，不需要追求好看，样本比空白更重要。", "录入时保留题型、耗时和错因，后面诊断才会准。"];
   const list = [];
+  if (data.coverage.nextPlan[0]) list.push(data.coverage.nextPlan[0]);
   if (data.pending.length) list.push(`复盘队列还有 ${data.pending.length} 条，先处理最近的错因。`);
   if (data.weak) list.push(`${data.weak.short} 当前正确率偏低，下一轮优先做小题量精练。`);
   if (data.slow?.pace) list.push(`${data.slow.short} 配速偏慢，建议下一组用计时器控制节奏。`);
   if (data.reasons[0]) list.push(`${data.reasons[0].name} 是当前主要错因，建议单独建立一组复盘记录。`);
   if (data.todayTotal < settings.dailyGoal) list.push(`今日还差 ${Math.max(0, settings.dailyGoal - data.todayTotal)} 题，适合补一组短训练。`);
   return list.slice(0, 4);
+}
+
+function trainingCoverage(records: TrainingRecord[], settings: Settings) {
+  const rows = active(records);
+  const items = MODULES.filter((module) => module.name !== "全模块测试").flatMap((module, moduleIndex) =>
+    module.subTypes.map((subType, subIndex) => {
+      const scoped = rows.filter((item) => item.module === module.name && item.subType === subType);
+      const total = sum(scoped, "total");
+      const correct = sum(scoped, "correct");
+      const lastDate = scoped.reduce((latest, item) => (item.date > latest ? item.date : latest), "");
+      const daysSince = lastDate ? daysBetween(lastDate, today()) : null;
+      return {
+        key: `${module.id}:${subType}`,
+        module: module.name,
+        moduleShort: module.short,
+        subType,
+        total,
+        correct,
+        rate: percent(correct, total),
+        pace: avgPace(scoped),
+        lastDate,
+        daysSince,
+        order: moduleIndex * 100 + subIndex
+      };
+    })
+  );
+  const trained = items.filter((item) => item.total > 0);
+  const totalQuestions = sum(rows, "total");
+  const average = items.length ? totalQuestions / items.length : 0;
+  const variance = average ? items.reduce((acc, item) => acc + (item.total - average) ** 2, 0) / items.length : 0;
+  const deviation = average ? Math.sqrt(variance) / average : 1;
+  const balanceScore = totalQuestions ? Math.max(0, Math.round(100 - Math.min(100, deviation * 42))) : 0;
+  const undertrained = [...items]
+    .sort((a, b) => a.total - b.total || staleWeight(b) - staleWeight(a) || a.order - b.order)
+    .slice(0, 6);
+  const stale = [...items]
+    .filter((item) => !item.lastDate || (item.daysSince ?? 0) >= 10)
+    .sort((a, b) => staleWeight(b) - staleWeight(a) || a.total - b.total || a.order - b.order)
+    .slice(0, 6);
+  const weakSubTypes = trained
+    .filter((item) => item.total >= 10)
+    .sort((a, b) => a.rate - b.rate || b.total - a.total)
+    .slice(0, 5);
+  const primary = stale[0] || undertrained[0] || weakSubTypes[0];
+  const nextPlan = totalQuestions
+    ? [
+        primary ? `下一组建议补 ${primary.moduleShort} · ${primary.subType}，先做 15-25 题建立样本。` : "下一组建议做一轮混合训练，维持各模块手感。",
+        weakSubTypes[0] && weakSubTypes[0].rate < settings.targetRate
+          ? `${weakSubTypes[0].moduleShort} · ${weakSubTypes[0].subType} 正确率 ${weakSubTypes[0].rate}%，做完后优先复盘错因。`
+          : "如果正确率稳定，下一轮可以增加限时压力，不急着堆题量。",
+        balanceScore < 72
+          ? `当前题型均衡指数 ${balanceScore}/100，先补题量最少和最久没做的小项。`
+          : `当前题型均衡指数 ${balanceScore}/100，继续按弱项和复盘队列推进。`
+      ].filter(Boolean) as string[]
+    : ["先录入一组全模块或混合训练，系统会自动识别题型覆盖缺口。", "每次记录保留小题型和耗时，学习计划才会越来越准。"];
+  return { items, balanceScore, average, undertrained, stale, weakSubTypes, nextPlan };
+}
+
+function staleWeight(item: { daysSince: number | null; total: number }) {
+  return item.daysSince === null ? 999 : item.daysSince + Math.max(0, 20 - item.total) / 10;
 }
 
 function quoteOfDay() {
@@ -863,6 +927,13 @@ function daysAgo(offset: number) {
   const date = new Date();
   date.setDate(date.getDate() - offset);
   return today(date);
+}
+
+function daysBetween(start: string, end: string) {
+  const startTime = new Date(`${start}T00:00:00`).getTime();
+  const endTime = new Date(`${end}T00:00:00`).getTime();
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) return 0;
+  return Math.max(0, Math.round((endTime - startTime) / 86_400_000));
 }
 
 function readJson(key: string) {
