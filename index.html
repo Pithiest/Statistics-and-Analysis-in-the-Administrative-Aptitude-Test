@@ -8,31 +8,40 @@
     <meta name="apple-mobile-web-app-title" content="行测训练系统" />
     <meta name="description" content="行测训练统计、复盘与自动同步工具。" />
     <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        const saved = JSON.parse(localStorage.getItem("pithiest_xingce_settings_v6") || "{}");
+        document.documentElement.dataset.theme = saved.theme === "dark" ? "dark" : "light";
+      } catch {
+        document.documentElement.dataset.theme = "light";
+      }
+    </script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/pithiest-icon.svg" type="image/svg+xml" />
     <link rel="dns-prefetch" href="https://atwsraivphybkfmyeubd.supabase.co" />
     <title>行测训练系统</title>
     <style>
-      :root { color-scheme: light; font-family: "Microsoft YaHei", system-ui, sans-serif; background: #f4f6fa; color: #111827; }
-      @media (prefers-color-scheme: dark) { :root { color-scheme: dark; background: #0b111b; color: #edf3ff; } }
-      body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 20% 0%, rgba(37, 99, 235, 0.12), transparent 30%), radial-gradient(circle at 90% 10%, rgba(15, 118, 110, 0.12), transparent 28%), #f4f6fa; }
-      @media (prefers-color-scheme: dark) { body { background: radial-gradient(circle at 20% 0%, rgba(37, 99, 235, 0.22), transparent 30%), radial-gradient(circle at 90% 10%, rgba(15, 118, 110, 0.2), transparent 28%), #0b111b; } }
+      :root { color-scheme: light; font-family: "Microsoft YaHei", system-ui, sans-serif; background: #eef2f6; color: #111827; }
+      :root[data-theme="dark"] { color-scheme: dark; background: #0a1019; color: #edf3ff; }
+      body { margin: 0; min-width: 320px; min-height: 100vh; background: #eef2f6; }
+      :root[data-theme="dark"] body { background: #0a1019; }
       .preload-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
-      .preload-card { width: min(620px, 100%); padding: 30px; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 22px; background: rgba(255, 255, 255, 0.78); box-shadow: 0 22px 70px rgba(15, 23, 42, 0.12); backdrop-filter: blur(18px); }
-      @media (prefers-color-scheme: dark) { .preload-card { background: rgba(18, 26, 39, 0.78); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34); } }
-      .preload-kicker { margin: 0 0 12px; color: #2563eb; font-size: 13px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
-      .preload-card h1 { margin: 0; font-size: clamp(30px, 7vw, 48px); line-height: 1.05; letter-spacing: 0; }
-      .preload-card p { margin: 14px 0 24px; color: #667085; font-size: 15px; font-weight: 800; line-height: 1.7; }
-      @media (prefers-color-scheme: dark) { .preload-card p { color: #95a3b8; } }
-      .preload-bar { height: 10px; overflow: hidden; border-radius: 999px; background: rgba(148, 163, 184, 0.22); }
-      .preload-bar i { display: block; width: 46%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2563eb, #0f766e); animation: preloadMove 1.15s ease-in-out infinite alternate; }
-      .preload-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; color: #667085; font-size: 12px; font-weight: 850; }
-      .preload-meta span { padding: 6px 10px; border: 1px solid rgba(148, 163, 184, 0.32); border-radius: 999px; background: rgba(255, 255, 255, 0.5); }
-      .preload-slow { display: none; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding: 12px 14px; border: 1px solid rgba(37, 99, 235, 0.18); border-radius: 16px; background: rgba(37, 99, 235, 0.08); color: #475467; font-size: 13px; font-weight: 800; line-height: 1.5; }
+      .preload-card { width: min(480px, 100%); padding: 24px; border: 1px solid #dce3ec; border-radius: 10px; background: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06); }
+      :root[data-theme="dark"] .preload-card { border-color: #263449; background: #111927; box-shadow: 0 18px 42px rgba(0, 0, 0, 0.26); }
+      .preload-kicker { margin: 0 0 8px; color: #2463eb; font-size: 12px; font-weight: 900; }
+      .preload-card h1 { margin: 0; font-size: clamp(26px, 6vw, 36px); line-height: 1.08; letter-spacing: 0; }
+      .preload-card p { margin: 10px 0 20px; color: #667085; font-size: 14px; font-weight: 750; line-height: 1.65; }
+      :root[data-theme="dark"] .preload-card p { color: #95a3b8; }
+      .preload-bar { height: 4px; overflow: hidden; border-radius: 999px; background: rgba(148, 163, 184, 0.22); }
+      .preload-bar i { display: block; width: 46%; height: 100%; border-radius: inherit; background: #2463eb; animation: preloadMove 1.05s ease-in-out infinite alternate; }
+      .preload-meta { display: flex; gap: 18px; margin-top: 15px; color: #667085; font-size: 11px; font-weight: 800; }
+      .preload-meta span::before { content: "·"; margin-right: 6px; color: #2463eb; }
+      .preload-slow { display: none; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding: 11px 12px; border: 1px solid rgba(37, 99, 235, 0.18); border-radius: 8px; background: rgba(37, 99, 235, 0.06); color: #475467; font-size: 12px; font-weight: 800; line-height: 1.5; }
       .preload-shell.is-slow .preload-slow { display: flex; }
-      .preload-slow button { flex: 0 0 auto; min-height: 34px; border: 0; border-radius: 999px; padding: 0 14px; background: #111827; color: white; font: inherit; cursor: pointer; }
+      .preload-slow button { flex: 0 0 auto; min-height: 34px; border: 0; border-radius: 7px; padding: 0 13px; background: #111827; color: white; font: inherit; cursor: pointer; }
       @media (max-width: 520px) { .preload-slow { align-items: flex-start; flex-direction: column; } .preload-slow button { width: 100%; } }
-      @media (prefers-color-scheme: dark) { .preload-slow { color: #b8c4d8; background: rgba(37, 99, 235, 0.14); } .preload-slow button { background: #edf3ff; color: #0b111b; } }
+      :root[data-theme="dark"] .preload-slow { color: #b8c4d8; background: rgba(37, 99, 235, 0.12); }
+      :root[data-theme="dark"] .preload-slow button { background: #edf3ff; color: #0b111b; }
       @keyframes preloadMove { from { transform: translateX(-12%); } to { transform: translateX(128%); } }
       @media (prefers-reduced-motion: reduce) { .preload-bar i { animation: none; width: 100%; } }
     </style>
@@ -41,14 +50,13 @@
     <div id="root">
       <main class="preload-shell" aria-label="应用正在加载">
         <section class="preload-card">
-          <p class="preload-kicker">XINGCE DATA STUDIO</p>
-          <h1>训练数据正在准备</h1>
-          <p>首次进入需要下载核心资源；本机数据会优先保存，空间码数据会在进入后自动同步。</p>
+          <p class="preload-kicker">行测训练系统</p>
+          <h1>正在进入数据工作台</h1>
+          <p>正在恢复本机记录和核心界面。</p>
           <div class="preload-bar"><i></i></div>
           <div class="preload-meta">
-            <span>本机优先</span>
-            <span>自动同步</span>
-            <span>离线可用</span>
+            <span>本机记录</span>
+            <span>图表按需加载</span>
           </div>
           <div class="preload-slow" role="status">
             <span>网络偏慢，可继续等待；如果一直停在这里，刷新会清理旧缓存。</span>

@@ -13,20 +13,20 @@ const localPayload = await readLocalPayload().catch(() => null);
 const payload = remotePayload || localPayload;
 
 if (!payload) {
-  throw new Error("Source payload is empty.");
-}
+  console.warn("Source payload is empty; keeping repository source files.");
+} else {
+  for (const file of payload.delete || []) {
+    await rm(safeResolve(file), { force: true });
+  }
 
-for (const file of payload.delete || []) {
-  await rm(safeResolve(file), { force: true });
-}
+  for (const [file, content] of Object.entries(payload.files || {})) {
+    const target = safeResolve(file);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, Buffer.from(content, "base64"));
+  }
 
-for (const [file, content] of Object.entries(payload.files || {})) {
-  const target = safeResolve(file);
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, Buffer.from(content, "base64"));
+  console.log(`Prepared ${Object.keys(payload.files || {}).length} source files for build.`);
 }
-
-console.log(`Prepared ${Object.keys(payload.files || {}).length} source files for build.`);
 
 async function readLocalPayload() {
   const text = await readFile(resolve("deploy-source.json"), "utf8");
