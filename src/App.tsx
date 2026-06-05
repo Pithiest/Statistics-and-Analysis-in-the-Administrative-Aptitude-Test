@@ -1,11 +1,8 @@
 import {
   BarChart3,
   CheckCircle2,
-  Clock3,
   Cloud,
   CloudOff,
-  Flame,
-  Gauge,
   KeyRound,
   LayoutDashboard,
   ListChecks,
@@ -15,7 +12,6 @@ import {
   Sparkles,
   Sun,
   Table2,
-  Target,
 } from "./icons";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -411,7 +407,13 @@ export function App() {
         </div>
         <nav className="side-nav">
           {nav.map((item) => (
-            <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
+            <button
+              key={item.id}
+              className={view === item.id ? "active" : ""}
+              onPointerEnter={() => preloadView(item.id)}
+              onFocus={() => preloadView(item.id)}
+              onClick={() => navigate(item.id)}
+            >
               {item.icon}
               <span>{item.label}</span>
             </button>
@@ -450,7 +452,19 @@ export function App() {
 
         <section key={view} className="page">
           <Suspense fallback={<div className="panel route-loading"><RefreshCw className="spin" /> 正在打开页面</div>}>
-            {view === "today" && <Today data={data} settings={settings} onRecord={() => navigate("record")} onReview={() => navigate("review")} />}
+            {view === "today" && (
+              <Today
+                data={data}
+                settings={settings}
+                onRecord={() => navigate("record")}
+                onReview={() => navigate("review")}
+                onDiagnose={(module) => {
+                  setDiagnosisModule(module);
+                  setDiagnosisSub("全部题型");
+                  navigate("diagnosis");
+                }}
+              />
+            )}
             {view === "record" && (
               <RecordRoute
                 form={form}
@@ -547,7 +561,13 @@ export function App() {
 
       <nav className="mobile-nav">
         {nav.map((item) => (
-          <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
+          <button
+            key={item.id}
+            className={view === item.id ? "active" : ""}
+            onPointerEnter={() => preloadView(item.id)}
+            onFocus={() => preloadView(item.id)}
+            onClick={() => navigate(item.id)}
+          >
             {item.icon}
             <span>{item.label}</span>
           </button>
@@ -559,10 +579,25 @@ export function App() {
   );
 }
 
-function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof dashboard>; settings: Settings; onRecord: () => void; onReview: () => void }) {
-  const radarData = data.moduleStats.map((item) => ({ module: item.short, 正确率: item.rate || 0, 样本: item.total }));
+function Today({
+  data,
+  settings,
+  onRecord,
+  onReview,
+  onDiagnose
+}: {
+  data: ReturnType<typeof dashboard>;
+  settings: Settings;
+  onRecord: () => void;
+  onReview: () => void;
+  onDiagnose: (module: ModuleName) => void;
+}) {
+  const radarData = data.moduleStats.map((item) => ({ module: item.short, 健康度: item.health, 样本: item.total }));
   const remaining = Math.max(0, settings.dailyGoal - data.todayTotal);
   const rateGap = data.todayTotal ? Math.max(0, settings.targetRate - data.todayRate) : 0;
+  const leadPlan = data.coverage.nextPlan[0] || data.recommendations[0] || "先补一组真实训练，系统会继续更新下一步计划。";
+  const topUndertrained = data.coverage.undertrained[0];
+  const topStale = data.coverage.stale[0];
   const heroTitle = !data.total
     ? "先建立第一条训练记录"
     : !data.todayTotal
@@ -573,117 +608,202 @@ function Today({ data, settings, onRecord, onReview }: { data: ReturnType<typeof
   const heroDetail = !data.total
     ? "录入一组真实训练后，系统会开始判断题量、正确率、错因和配速。"
     : !data.todayTotal
-      ? data.coverage.nextPlan[0] || "先补一组短训练，再看今天的正确率和配速。"
+      ? `近 7 天 ${data.weekTotal} 题，当前弱项 ${data.weak?.short || "待判断"}，先把今天的第一组样本补上。`
     : rateGap
       ? `今日正确率 ${data.todayRate}%，距离目标还差 ${rateGap} 个点。`
       : `今日正确率 ${data.todayRate}%，继续保持复盘节奏。`;
   return (
-    <div className="stack">
-      <section className="hero">
-        <div className="hero-copy">
-          <h2>{heroTitle}</h2>
-          <span>{heroDetail}</span>
-          <p className="quote-line">{data.quote}</p>
-          <div className="hero-actions">
+    <div className="stack dashboard-stack">
+      <section className="command-surface">
+        <div className="command-head">
+          <div>
+            <p className="section-kicker">今日行动</p>
+            <h2>{heroTitle}</h2>
+            <span>{heroDetail}</span>
+          </div>
+          <div className="command-actions">
             <button className="primary-btn" onClick={onRecord}><Plus /> 录入训练</button>
             <button className="soft-btn" onClick={onReview}><ListChecks /> 处理复盘</button>
           </div>
         </div>
-        <div className="goal-card">
-          <span>今日目标</span>
-          <strong>{data.goalDone}%</strong>
-          <small>{data.todayTotal}/{settings.dailyGoal} 题</small>
-          <i style={{ width: `${data.goalDone}%` }} />
-        </div>
-      </section>
 
-      <section className="focus-strip">
-        <div>
-          <span>近 7 天</span>
-          <strong>{data.weekTotal}</strong>
-          <small>{data.weekRate ? `${data.weekRate}% 正确率` : "暂无样本"}</small>
+        <div className="signal-strip">
+          <SignalMetric
+            label="今日进度"
+            value={`${data.todayTotal}/${settings.dailyGoal}`}
+            hint={`${data.goalDone}% · ${data.todayRate || 0}% 正确率`}
+            progress={data.goalDone}
+          />
+          <SignalMetric
+            label="近 7 天题量"
+            value={data.weekTotal}
+            hint={`${signed(data.comparison.volumeDelta)} 题 / 上周期`}
+            tone={deltaTone(data.comparison.volumeDelta)}
+          />
+          <SignalMetric
+            label="近 7 天正确率"
+            value={`${data.weekRate}%`}
+            hint={`${signed(data.comparison.rateDelta)} 个点 / 上周期`}
+            tone={deltaTone(data.comparison.rateDelta)}
+          />
+          <SignalMetric
+            label="复盘完成"
+            value={`${data.review.completionRate}%`}
+            hint={`${data.review.pending} 条待处理`}
+            tone={data.review.pending ? "warning" : "good"}
+          />
+          <SignalMetric
+            label="连续训练"
+            value={`${data.streak} 天`}
+            hint={`累计 ${data.activeDays} 个训练日`}
+          />
         </div>
-        <div>
-          <span>连续训练</span>
-          <strong>{data.streak}</strong>
-          <small>累计活跃 {data.activeDays} 天</small>
-        </div>
-        <div>
-          <span>当前弱项</span>
-          <strong>{data.weak?.short || "--"}</strong>
-          <small>{data.weak ? `${data.weak.rate}% · ${data.weak.total}题` : "等待数据"}</small>
-        </div>
-        <div>
-          <span>复盘压力</span>
-          <strong>{data.pending.length}</strong>
-          <small>{data.pending.length ? "先处理最近错因" : "队列清爽"}</small>
-        </div>
-      </section>
 
-      <section className="metric-grid">
-        <Metric label="累计正确率" value={`${data.totalRate}%`} unit={`${data.correct}/${data.total || 0} 题`} icon={<Target />} />
-        <Metric label="今日题量" value={data.todayTotal} unit={`目标 ${settings.dailyGoal} 题`} icon={<Flame />} />
-        <Metric label="平均配速" value={data.avgPace || "--"} unit="秒/题" icon={<Gauge />} />
-        <Metric label="最慢模块" value={data.slow?.short || "--"} unit={data.slow?.pace ? `${data.slow.pace}s/题` : "暂无样本"} icon={<Clock3 />} />
-      </section>
-
-      <section className="grid-two plan-grid">
-        <Panel title="下一步学习计划" note={`均衡指数 ${data.coverage.balanceScore}/100`}>
-          <StudyPlan coverage={data.coverage} />
-        </Panel>
-        <Panel title="题型覆盖" note="题量均衡 / 久未训练">
-          <CoverageBoard coverage={data.coverage} />
-        </Panel>
-      </section>
-
-      <section className="grid-two wide-left">
-        <Panel title="14 天趋势" note="题量 / 正确率 / 配速">
-          <ChartBox>
-            <DeferredChart>
-              <OverviewTrendChart data={data.trend} targetRate={settings.targetRate} />
-            </DeferredChart>
-          </ChartBox>
-        </Panel>
-        <Panel title="模块能力矩阵" note="按原模块统计">
-          {data.total ? (
-            <ChartBox>
-              <DeferredChart>
-                <ModuleRadarChart data={radarData} />
-              </DeferredChart>
-            </ChartBox>
-          ) : <Empty text="录入后生成模块矩阵。" />}
-          <div className="matrix-note">
-            {data.moduleStats.map((item) => <span key={item.id}>{item.short} {item.total}题</span>)}
+        <div className="command-core">
+          <div className="trend-surface">
+            <div className="panel-head compact-head">
+              <div><h3>14 天训练走势</h3><span>题量与正确率</span></div>
+              <strong className="trend-summary">{data.totalRate}%<small>累计正确率</small></strong>
+            </div>
+            {data.total ? (
+              <ChartBox>
+                <DeferredChart>
+                  <OverviewTrendChart data={data.trend} targetRate={settings.targetRate} />
+                </DeferredChart>
+              </ChartBox>
+            ) : <Empty text="录入后生成趋势。" />}
           </div>
-        </Panel>
+          <aside className="next-action">
+            <div>
+              <p className="section-kicker">下一组</p>
+              <h3>{leadPlan}</h3>
+            </div>
+            <dl className="action-facts">
+              <div><dt>题量缺口</dt><dd>{topUndertrained ? `${topUndertrained.moduleShort} · ${topUndertrained.subType}` : "等待样本"}</dd></div>
+              <div><dt>手感缺口</dt><dd>{topStale ? `${topStale.moduleShort} · ${topStale.subType}` : "等待样本"}</dd></div>
+              <div><dt>题型均衡</dt><dd>{data.coverage.balanceScore}/100</dd></div>
+            </dl>
+            <p className="daily-quote">{data.quote}</p>
+          </aside>
+        </div>
       </section>
 
-      <section className="grid-two">
-        <Panel title="错因结构" note="按错题数汇总">
+      <section className="surface-section module-health-surface">
+        <div className="panel-head">
+          <div><h3>模块健康矩阵</h3><span>健康度综合正确率、配速、样本、训练新鲜度与复盘完成情况</span></div>
+          <strong className="matrix-score">{Math.round(data.moduleStats.reduce((sum, item) => sum + item.health, 0) / data.moduleStats.length)}<small>/100</small></strong>
+        </div>
+        <div className="module-health-grid">
+          <ModuleOpsTable rows={data.moduleStats} onDiagnose={onDiagnose} />
+          <div className="radar-surface">
+            {data.total ? (
+              <ChartBox compact>
+                <DeferredChart>
+                  <ModuleRadarChart data={radarData} />
+                </DeferredChart>
+              </ChartBox>
+            ) : <Empty text="录入后生成模块矩阵。" />}
+          </div>
+        </div>
+      </section>
+
+      <section className="operations-grid">
+        <section className="surface-section">
+          <div className="panel-head"><div><h3>训练编排</h3><span>题量覆盖、久未训练和下一步安排</span></div></div>
+          <StudyPlan coverage={data.coverage} />
+          <CoverageBoard coverage={data.coverage} />
+        </section>
+        <section className="surface-section">
+          <div className="panel-head"><div><h3>复盘队列</h3><span>{data.pending.length ? `${data.pending.length} 条待处理` : "当前没有积压"}</span></div></div>
+          <ReviewPreview records={data.pending} onReview={onReview} />
+        </section>
+      </section>
+
+      <section className="insight-band">
+        <div>
+          <div className="panel-head compact-head"><div><h3>错因结构</h3><span>按错题数汇总</span></div></div>
           {data.reasons.length ? (
             <Bars rows={data.reasons.map((item) => ({ name: item.name, value: item.value, hint: `${item.value}错` }))} empty="暂无错因数据" />
           ) : <Empty text="暂无错因数据。" />}
-        </Panel>
-        <Panel title="训练热力" note="近 35 天题量">
+        </div>
+        <div>
+          <div className="panel-head compact-head"><div><h3>训练热力</h3><span>近 35 天题量分布</span></div></div>
           <div className="heatmap">
             {data.heatmap.map((item) => <span key={item.date} data-level={item.level} title={`${item.date} · ${item.total} 题`} />)}
           </div>
           <ul className="advice compact-list">{data.recommendations.map((item) => <li key={item}>{item}</li>)}</ul>
-        </Panel>
-      </section>
-
-      <Panel title="模块概况">
-        <div className="module-list">
-          {data.moduleStats.map((item) => (
-            <div key={item.id}>
-              <span style={{ color: item.accent }}>{item.name}</span>
-              <strong>{item.total ? `${item.rate}%` : "--"}</strong>
-              <i><b style={{ width: `${item.rate}%`, background: item.accent }} /></i>
-              <small>{item.total} 题 · {item.pace ? `${item.pace}s/题` : "--"}</small>
-            </div>
-          ))}
         </div>
-      </Panel>
+      </section>
+    </div>
+  );
+}
+
+function SignalMetric({ label, value, hint, tone = "neutral", progress }: {
+  label: string;
+  value: ReactNode;
+  hint: string;
+  tone?: "neutral" | "good" | "warning" | "bad";
+  progress?: number;
+}) {
+  return (
+    <div className={`signal-metric tone-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{hint}</small>
+      {typeof progress === "number" && <i><b style={{ width: `${progress}%` }} /></i>}
+    </div>
+  );
+}
+
+function ModuleOpsTable({ rows, onDiagnose }: {
+  rows: ReturnType<typeof dashboard>["moduleStats"];
+  onDiagnose: (module: ModuleName) => void;
+}) {
+  return (
+    <div className="ops-table">
+      <div className="ops-head"><span>模块</span><span>健康度</span><span>正确率</span><span>题量</span><span>最近训练</span><span>复盘</span></div>
+      {rows.map((item) => (
+        <button className="ops-row" key={item.id} onClick={() => onDiagnose(item.name)}>
+          <span><i style={{ background: item.accent }} /><b>{item.name}</b></span>
+          <strong><em style={{ width: `${item.health}%` }} /><b className="health-value">{item.health}</b></strong>
+          <b>{item.total ? `${item.rate}%` : "--"}</b>
+          <b>{item.total}</b>
+          <small>{item.lastDate ? `${item.freshness} 分` : "未训练"}</small>
+          <small className={item.pending ? "status-alert" : ""}>{item.pending || 0}</small>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function signed(value: number) {
+  if (!value) return "0";
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function deltaTone(value: number): "neutral" | "good" | "bad" {
+  if (!value) return "neutral";
+  return value > 0 ? "good" : "bad";
+}
+
+function preloadView(view: ViewId) {
+  if (view === "today") return;
+  void import("./Views");
+  if (view === "diagnosis") void import("./Charts");
+}
+
+function ReviewPreview({ records, onReview }: { records: TrainingRecord[]; onReview: () => void }) {
+  if (!records.length) return <Empty text="暂无待复盘记录。" />;
+  return (
+    <div className="review-preview">
+      {records.slice(0, 4).map((item) => (
+        <div key={item.id}>
+          <span>{item.date}</span>
+          <strong>{item.module} · {item.subType}</strong>
+          <small>{item.correct}/{item.total} · 错 {Math.max(0, item.total - item.correct)} · {item.errorReason}</small>
+        </div>
+      ))}
+      <button className="soft-btn" onClick={onReview}><ListChecks /> 查看全部</button>
     </div>
   );
 }
@@ -726,14 +846,6 @@ function CoverageColumn({ title, rows, mode }: { title: string; rows: CoverageDa
       )) : <Empty text="暂时没有明显缺口。" />}
     </div>
   );
-}
-
-function Metric({ label, value, unit, icon }: { label: string; value: ReactNode; unit: string; icon: ReactNode }) {
-  return <div className="metric"><div><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>{icon}</div>;
-}
-
-function Panel({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
-  return <section className="panel"><div className="panel-head"><div><h3>{title}</h3>{note && <span>{note}</span>}</div></div>{children}</section>;
 }
 
 function ChartBox({ children, compact = false }: { children: ReactNode; compact?: boolean }) {

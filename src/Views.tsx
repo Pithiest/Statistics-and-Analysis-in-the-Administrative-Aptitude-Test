@@ -1,14 +1,12 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  CalendarDays,
   CheckCircle2,
   Clock3,
   Cloud,
   CloudOff,
   Download,
   Edit3,
-  Gauge,
   ListChecks,
   Pause,
   Play,
@@ -26,6 +24,8 @@ import {
 import {
   DEFAULT_SETTINGS,
   ERROR_REASONS,
+  MAX_RECORD_DURATION,
+  MAX_RECORD_TOTAL,
   MODULES,
   accent,
   avgPace,
@@ -38,7 +38,7 @@ import {
   subTypeOptions,
   suggestedMinutes
 } from "./model";
-import type { EntryForm, ModuleName, QuickTemplate, Settings, SyncState, TrainingRecord, ViewId } from "./model";
+import type { EntryForm, ModuleName, QuickTemplate, Settings, SyncState, TrainingRecord } from "./model";
 
 const ModuleTrendChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleTrendChart })));
 const SubTypeBarChart = lazy(() => import("./Charts").then((module) => ({ default: module.SubTypeBarChart })));
@@ -86,11 +86,11 @@ export function RecordView(props: {
                 {subTypeOptions(form.module, form.subType).map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </Field>
-            <Field label="题量"><input inputMode="numeric" value={form.total} onChange={(event) => setTotal(event.target.value)} placeholder="完成题数" /></Field>
-            <Field label="正确数"><input inputMode="numeric" value={form.correct} onChange={(event) => setForm({ ...form, correct: event.target.value })} placeholder="做对几题" /></Field>
+            <Field label="题量"><input type="number" inputMode="numeric" min="1" max={MAX_RECORD_TOTAL} value={form.total} onChange={(event) => setTotal(event.target.value)} placeholder="完成题数" /></Field>
+            <Field label="正确数"><input type="number" inputMode="numeric" min="0" max={form.total || MAX_RECORD_TOTAL} value={form.correct} onChange={(event) => setForm({ ...form, correct: event.target.value })} placeholder="做对几题" /></Field>
             <Field label="用时">
               <div className="input-action">
-                <input inputMode="decimal" value={form.duration} onChange={(event) => setForm({ ...form, duration: event.target.value })} placeholder="分钟" />
+                <input type="number" inputMode="decimal" min="0.1" max={MAX_RECORD_DURATION} step="0.1" value={form.duration} onChange={(event) => setForm({ ...form, duration: event.target.value })} placeholder="分钟" />
                 <button type="button" className="mini-btn" onClick={useSuggested}>估</button>
               </div>
             </Field>
@@ -155,77 +155,80 @@ export function Diagnosis({ records, settings, module, subType, range, setModule
   onEdit: (record: TrainingRecord) => void;
 }) {
   const modules = MODULES.filter((item) => item.name !== "全模块测试");
+  const activeTabRef = useRef<HTMLButtonElement>(null);
   const detail = moduleDetail(records, module, settings, subType, range);
   const moduleAll = moduleDetail(records, module, settings, "全部题型", "全部");
   const allSubTypes = moduleSubTypes(records, module);
-  const weakest = moduleAll.subTypes[0];
+  const weakest = moduleAll.weakest;
   const emptyText = moduleAll.total ? "当前时间范围暂无记录，模块全量摘要仍会保留在上方。" : "当前模块暂无记录。";
-  return (
-    <div className="stack">
-      <div className="module-tabs">
-        {modules.map((item) => {
-          const quick = moduleDetail(records, item.name, settings, "全部题型", "全部");
-          return (
-            <button key={item.id} className={module === item.name ? "active" : ""} onClick={() => setModule(item.name)}>
-              {item.short}
-              <span>{quick.total ? `${quick.rate}% · ${quick.total}题` : "--"}</span>
-            </button>
-          );
-        })}
-      </div>
 
-      <section className="toolbar diagnosis-toolbar">
-        <select value={subType} onChange={(event) => setSubType(event.target.value)}>
-          <option>全部题型</option>
-          {allSubTypes.map((item) => <option key={item}>{item}</option>)}
-        </select>
-        <select value={range} onChange={(event) => setRange(event.target.value)}>
-          <option value="7">近 7 天</option>
-          <option value="14">近 14 天</option>
-          <option value="30">近 30 天</option>
-          <option value="90">近 90 天</option>
-          <option value="全部">全部</option>
-        </select>
+  useEffect(() => {
+    const revealActiveTab = () => activeTabRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    const frame = window.requestAnimationFrame(revealActiveTab);
+    window.addEventListener("resize", revealActiveTab);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", revealActiveTab);
+    };
+  }, [module]);
+
+  return (
+    <div className="stack diagnosis-page">
+      <section className="diagnosis-switcher">
+        <div className="module-tabs">
+          {modules.map((item) => {
+            const quick = moduleDetail(records, item.name, settings, "全部题型", "全部");
+            return (
+              <button
+                key={item.id}
+                ref={module === item.name ? activeTabRef : undefined}
+                className={module === item.name ? "active" : ""}
+                onClick={() => setModule(item.name)}
+              >
+                <strong>{item.short}</strong>
+                <span>{quick.total ? `${quick.rate}% · ${quick.total}题` : "暂无样本"}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="diagnosis-filters">
+          <select value={subType} onChange={(event) => setSubType(event.target.value)}>
+            <option>全部题型</option>
+            {allSubTypes.map((item) => <option key={item}>{item}</option>)}
+          </select>
+          <select value={range} onChange={(event) => setRange(event.target.value)}>
+            <option value="7">近 7 天</option>
+            <option value="14">近 14 天</option>
+            <option value="30">近 30 天</option>
+            <option value="90">近 90 天</option>
+            <option value="全部">全部</option>
+          </select>
+        </div>
       </section>
 
-      <section className="diagnosis-action">
-        <div>
-          <span>下一步动作</span>
-          <strong>{weakest ? `优先复盘 ${weakest.name}` : "先补一组真实样本"}</strong>
-          <p>{detail.actions[2] || detail.actions[0]}</p>
-        </div>
-        <div className="button-row">
+      <section className="diagnosis-command">
+        <div className="diagnosis-action">
+          <div>
+            <span>当前优先动作</span>
+            <strong>{weakest ? `处理 ${weakest.name}` : "先补一组真实样本"}</strong>
+            <p>{detail.actions[2] || detail.actions[0]}</p>
+          </div>
           {weakest && <button className="soft-btn" onClick={() => setSubType(weakest.name)}><Target /> 聚焦小项</button>}
         </div>
-      </section>
-
-      <section className="diagnosis-summary">
-        <div>
-          <span>模块总样本</span>
-          <strong>{moduleAll.total}</strong>
-          <small>{moduleAll.total ? `${moduleAll.rate}% · ${moduleAll.pace ? `${moduleAll.pace}s/题` : "--"}` : "暂无记录"}</small>
-        </div>
-        <div>
-          <span>当前筛选</span>
-          <strong>{detail.total}</strong>
-          <small>{range === "全部" ? "全部时间" : `近 ${range} 天`} · {subType}</small>
-        </div>
-        <div>
-          <span>优先小项</span>
-          <strong>{weakest ? weakest.name : "--"}</strong>
-          <small>{weakest ? `${weakest.rate}% · ${weakest.total}题` : "样本不足"}</small>
+        <div className="diagnosis-signals">
+          <DiagnosticSignal label="模块总样本" value={moduleAll.total} hint={moduleAll.total ? `${moduleAll.rate}% 正确率` : "暂无记录"} />
+          <DiagnosticSignal label="当前筛选" value={detail.total} hint={`${range === "全部" ? "全部时间" : `近 ${range} 天`} · ${subType}`} />
+          <DiagnosticSignal label="平均配速" value={detail.pace || "--"} hint="秒/题" />
+          <DiagnosticSignal label="待复盘" value={detail.pending} hint={detail.pending ? "需要处理" : "当前清爽"} />
         </div>
       </section>
 
-      <section className="metric-grid">
-        <Metric label="筛选题量" value={detail.total} unit="题" icon={<CalendarDays />} />
-        <Metric label="正确率" value={`${detail.rate}%`} unit={`目标 ${settings.targetRate}%`} icon={<Target />} />
-        <Metric label="平均配速" value={detail.pace || "--"} unit="秒/题" icon={<Gauge />} />
-        <Metric label="待复盘" value={detail.pending} unit="条" icon={<ListChecks />} />
-      </section>
-
-      <section className="grid-two wide-left">
-        <Panel title={`${module} 趋势`} note="正确率与配速">
+      <section className="diagnosis-grid">
+        <section className="surface-section">
+          <div className="panel-head">
+            <div><h3>{module} 趋势</h3><span>{range === "全部" ? "全部时间" : `近 ${range} 天`} · 正确率与配速</span></div>
+            <strong className="matrix-score">{detail.rate}<small>%</small></strong>
+          </div>
           {detail.total ? (
             <ChartBox>
               <DeferredChart>
@@ -233,20 +236,29 @@ export function Diagnosis({ records, settings, module, subType, range, setModule
               </DeferredChart>
             </ChartBox>
           ) : <Empty text={emptyText} />}
-        </Panel>
-        <Panel title="错因拆解" note="按错题数">
+        </section>
+        <section className="surface-section">
+          <div className="panel-head"><div><h3>错因拆解</h3><span>按错题数排序</span></div></div>
           {detail.reasons.length ? (
             <Bars rows={detail.reasons.map((item) => ({ name: item.name, value: item.value }))} empty="暂无错因数据" />
           ) : <Empty text="暂无错因数据。" />}
-        </Panel>
+        </section>
+      </section>
+
+      <section className="surface-section subtype-surface">
+        <div className="panel-head">
+          <div><h3>题型健康明细</h3><span>保留原始题型；无样本的小项也会显示</span></div>
+          <span className="table-caption">{detail.subTypes.filter((item) => item.total > 0).length}/{detail.subTypes.length} 已训练</span>
+        </div>
+        <SubTypeHealthTable rows={detail.subTypes} onSelect={setSubType} />
       </section>
 
       <section className="grid-two">
-        <Panel title="题型对比" note="按正确率从低到高">
-          {detail.subTypes.length ? (
+        <Panel title="题型正确率" note="只绘制有样本的小项">
+          {detail.subTypes.some((item) => item.total > 0) ? (
             <ChartBox>
               <DeferredChart>
-                <SubTypeBarChart data={detail.subTypes} />
+                <SubTypeBarChart data={detail.subTypes.filter((item) => item.total > 0)} />
               </DeferredChart>
             </ChartBox>
           ) : <Empty text="暂无题型数据。" />}
@@ -264,6 +276,39 @@ export function Diagnosis({ records, settings, module, subType, range, setModule
       </Panel>
     </div>
   );
+}
+
+function DiagnosticSignal({ label, value, hint }: { label: string; value: ReactNode; hint: string }) {
+  return <div><span>{label}</span><strong>{value}</strong><small>{hint}</small></div>;
+}
+
+function SubTypeHealthTable({ rows, onSelect }: {
+  rows: ReturnType<typeof moduleDetail>["subTypes"];
+  onSelect: (value: string) => void;
+}) {
+  return (
+    <div className="subtype-table">
+      <div className="subtype-head"><span>题型</span><span>状态</span><span>健康度</span><span>题量</span><span>正确率</span><span>配速</span><span>最近训练</span></div>
+      {rows.map((item) => (
+        <button key={item.name} className="subtype-row" onClick={() => onSelect(item.name)}>
+          <strong>{item.name}</strong>
+          <span className={`risk-pill risk-${riskClass(item.risk)}`}>{item.risk}</span>
+          <span className="health-cell"><i><b style={{ width: `${item.health}%` }} /></i>{item.health || "--"}</span>
+          <span>{item.total}</span>
+          <span>{item.total ? `${item.rate}%` : "--"}</span>
+          <span>{item.pace ? `${item.pace}s` : "--"}</span>
+          <small>{item.lastDate || "未训练"}</small>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function riskClass(risk: string) {
+  if (risk === "稳定") return "good";
+  if (risk === "待采样" || risk === "样本少") return "neutral";
+  if (risk === "正确率低") return "bad";
+  return "warning";
 }
 
 export function Review({ records, onDone, onEdit, onDelete }: { records: TrainingRecord[]; onDone: (record: TrainingRecord) => void; onEdit: (record: TrainingRecord) => void; onDelete: (record: TrainingRecord) => void }) {
@@ -341,7 +386,10 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
         <div><span>平均配速</span><strong>{pace || "--"}</strong><small>秒/题</small></div>
         <div><span>复盘状态</span><strong>{pending}</strong><small>{activeDayCount} 个训练日</small></div>
       </section>
-      <Panel title={`训练台账 · ${records.length} 条`} note="按筛选条件查看训练明细">
+      <section className="surface-section ledger-surface">
+        <div className="panel-head">
+          <div><h3>训练明细</h3><span>当前筛选共 {records.length} 条记录</span></div>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -395,7 +443,7 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
           ))}
           {!records.length && <Empty text="没有符合条件的记录。" />}
         </div>
-      </Panel>
+      </section>
     </div>
   );
 }
@@ -520,10 +568,6 @@ function collectPerformanceSnapshot(): PerformanceSnapshot {
   };
 }
 
-function Metric({ label, value, unit, icon }: { label: string; value: ReactNode; unit: string; icon: ReactNode }) {
-  return <div className="metric"><div><span>{label}</span><strong>{value}</strong><small>{unit}</small></div>{icon}</div>;
-}
-
 function Panel({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
   return <section className="panel"><div className="panel-head"><div><h3>{title}</h3>{note && <span>{note}</span>}</div></div>{children}</section>;
 }
@@ -613,10 +657,6 @@ function SyncIcon({ state }: { state: SyncState }) {
   return <Cloud />;
 }
 
-function title(view: ViewId) {
-  return { today: "训练总览", record: "训练录入", diagnosis: "专项诊断", review: "错题复盘", ledger: "训练台账", settings: "同步设置" }[view];
-}
-
 function syncLabel(state: SyncState) {
   return { local: "本机已保存", pending: "等待同步", syncing: "同步中", synced: "已同步", offline: "离线待同步", error: "同步异常" }[state];
 }
@@ -629,14 +669,6 @@ function syncHint(state: SyncState, spaceCode: string, lastSync: string) {
   if (state === "offline") return "联网后自动继续";
   if (state === "error") return "稍后会继续尝试";
   return "本机优先保存";
-}
-
-function sameRecordList(left: TrainingRecord[], right: TrainingRecord[]) {
-  if (left.length !== right.length) return false;
-  return left.every((item, index) => {
-    const other = right[index];
-    return Boolean(other) && item.id === other.id && item.updatedAt === other.updatedAt && item.deletedAt === other.deletedAt;
-  });
 }
 
 function formatTimer(seconds: number) {
