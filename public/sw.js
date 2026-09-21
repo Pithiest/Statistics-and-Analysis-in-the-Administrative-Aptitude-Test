@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "pithiest-xingce-";
-const CACHE_NAME = `${CACHE_PREFIX}v10`;
+const CACHE_NAME = `${CACHE_PREFIX}v11`;
 const SHELL_URL = "/index.html";
 const SHELL_ASSETS = ["/", SHELL_URL, "/manifest.webmanifest", "/pithiest-icon.svg"];
 const NAVIGATION_TIMEOUT_MS = 1200;

@@ -58,6 +58,7 @@ const ModuleRadarChart = lazy(() => import("./Charts").then((module) => ({ defau
 const RecordRoute = lazy(() => import("./Views").then((module) => ({ default: module.RecordView })));
 const DiagnosisRoute = lazy(() => import("./Views").then((module) => ({ default: module.Diagnosis })));
 const ReviewRoute = lazy(() => import("./Views").then((module) => ({ default: module.Review })));
+const MistakesWorkspace = lazy(() => import("./MistakesWorkspace").then((module) => ({ default: module.MistakesWorkspace })));
 const LedgerRoute = lazy(() => import("./Views").then((module) => ({ default: module.Ledger })));
 const SettingsRoute = lazy(() => import("./Views").then((module) => ({ default: module.SettingsView })));
 type CoverageData = ReturnType<typeof dashboard>["coverage"];
@@ -66,6 +67,7 @@ export function App() {
   const [hydrated, setHydrated] = useState(false);
   const [openingView, setOpeningView] = useState<ViewId | null>(null);
   const [view, setView] = useState<ViewId>("today");
+  const [reviewTab, setReviewTab] = useState<"questions" | "training">("questions");
   const [records, setRecords] = useState<TrainingRecord[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [spaceCode, setSpaceCode] = useState("");
@@ -531,7 +533,7 @@ export function App() {
                 data={data}
                 settings={settings}
                 onRecord={() => navigate("record")}
-                onReview={() => navigate("review")}
+                onReview={() => { setReviewTab("training"); navigate("review"); }}
                 onDiagnose={(module) => {
                   setDiagnosisModule(module);
                   setDiagnosisSub("全部题型");
@@ -575,7 +577,13 @@ export function App() {
                 onEdit={edit}
               />
             )}
-            {view === "review" && <ReviewRoute records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
+            {view === "review" && <div className="stack">
+              <div className="review-tabs" role="tablist" aria-label="复盘类型">
+                <button role="tab" aria-selected={reviewTab === "questions"} className={reviewTab === "questions" ? "active" : ""} onClick={() => setReviewTab("questions")}>粉笔错题本</button>
+                <button role="tab" aria-selected={reviewTab === "training"} className={reviewTab === "training" ? "active" : ""} onClick={() => setReviewTab("training")}>训练复盘{data.pending.length ? ` · ${data.pending.length}` : ""}</button>
+              </div>
+              {reviewTab === "questions" ? <MistakesWorkspace /> : <ReviewRoute records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
+            </div>}
             {view === "ledger" && (
               <LedgerRoute
                 records={ledger}
@@ -867,6 +875,7 @@ function deltaTone(value: number): "neutral" | "good" | "bad" {
 
 function preloadView(view: ViewId) {
   if (view === "today") return Promise.resolve();
+  if (view === "review") return Promise.all([import("./Views"), import("./MistakesWorkspace")]);
   return import("./Views");
 }
 
