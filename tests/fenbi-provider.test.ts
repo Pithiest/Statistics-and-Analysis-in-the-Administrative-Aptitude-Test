@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import {
-  getIdentity, pollQr, ProviderError, readAnswers, readQuestionBatch, readTree, startQr
+  getIdentity, pollQr, ProviderError, readAnswers, readQuestionBatch, readTree, registerDevice, startQr
 } from "../supabase/functions/fenbi-cloud/provider.ts";
-import type { CookieJar } from "../supabase/functions/fenbi-cloud/provider.ts";
+import type { CookieJar, DeviceRegistration } from "../supabase/functions/fenbi-cloud/provider.ts";
 
 // Every test replaces fetch before calling the provider. These are synthetic fixtures,
 // never calls to Fenbi and never browser/login/session access.
@@ -202,4 +202,77 @@ test("unexpected JSON login status and network errors do not expose bodies or UR
   await assert.rejects(readTree([]), error => error instanceof ProviderError && error.code === "VERIFICATION_REQUIRED" && !error.message.includes("synthetic-private"));
   await assert.rejects(pollQr("synthetic-only", []), error => error instanceof ProviderError && error.code === "INVALID_RESPONSE");
   await assert.rejects(readTree([]), error => error instanceof ProviderError && error.code === "NETWORK" && !error.message.includes("synthetic-private"));
+});
+
+function syntheticDevice(): DeviceRegistration {
+  return { startupId: "synthetic-browser-startup-id", extras: { canvas: "synthetic-canvas-hash", webgl: "Synthetic Vendor~Synthetic Renderer", screen: "1000x800x24", language: "zh-CN", platform: "SyntheticOS", cores: "8", memory: "8", touchPoints: "0" } };
+}
+
+test("device registration forwards browser values to the official route and keeps the updated isolated cookie jar", async t => {
+  const input = syntheticDevice();
+  const jar: CookieJar = [
+    { name: "session", value: "synthetic-old", domain: ".fenbi.com", path: "/" },
+    { name: "tiku_only", value: "synthetic-host", domain: "tiku.fenbi.com", path: "/" }
+  ];
+  const fetch = mockFetch(t, (url, init) => {
+    assert.equal(url.href, "https://login.fenbi.com/api/users/device/sid/create");
+    assert.equal(init.method, "POST");
+    assert.deepEqual(JSON.parse(String(init.body)), { pf: "web", ...input });
+    assert.equal(new Headers(init.headers).get("Cookie"), "session=synthetic-old");
+    return json({ code: 1, data: { deviceId: "synthetic-provider-issued-device-id" } }, 200, ["session=synthetic-new; Domain=fenbi.com; Path=/; Max-Age=3600"]);
+  });
+  assert.equal(await registerDevice(jar, input), "synthetic-provider-issued-device-id");
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.equal(jar.find(cookie => cookie.name === "session")?.value, "synthetic-new");
+  assert.equal(jar.find(cookie => cookie.name === "tiku_only")?.value, "synthetic-host");
+});
+
+test("registered device IDs are sent only when present on all three authenticated read routes", async t => {
+  const seen: Array<string | null> = [];
+  mockFetch(t, url => {
+    seen.push(url.searchParams.get("deviceId"));
+    if (url.pathname.endsWith("solutions")) return json({ solutions: [{ id: 100 }], materials: [] });
+    return json([]);
+  });
+  for (const deviceId of [undefined, "", "synthetic-device-id"]) {
+    await readTree([], deviceId);
+    await readQuestionBatch([], [100], deviceId);
+    await readAnswers([], [100], deviceId);
+  }
+  assert.deepEqual(seen, [null, null, null, null, null, null, "synthetic-device-id", "synthetic-device-id", "synthetic-device-id"]);
+});
+
+test("device registration rejects malformed browser inputs and invalid IDs before further requests", async t => {
+  const fetch = mockFetch(t, () => json({ code: 1, data: { deviceId: "synthetic-device-id" } }));
+  const missing = syntheticDevice();
+  delete (missing.extras as Partial<DeviceRegistration["extras"]>).canvas;
+  for (const input of [null, {}, { ...syntheticDevice(), startupId: "" }, { ...syntheticDevice(), startupId: "bad\nvalue" }, missing, { ...syntheticDevice(), extras: { ...syntheticDevice().extras, cores: 8 } }]) {
+    await assert.rejects(registerDevice([], input as DeviceRegistration), error => error instanceof ProviderError && error.code === "INVALID_REQUEST");
+  }
+  for (const deviceId of ["bad id", "bad\nvalue", "x".repeat(2049)]) {
+    await assert.rejects(readTree([], deviceId), error => error instanceof ProviderError && error.code === "INVALID_REQUEST");
+    await assert.rejects(readQuestionBatch([], [100], deviceId), error => error instanceof ProviderError && error.code === "INVALID_REQUEST");
+    await assert.rejects(readAnswers([], [100], deviceId), error => error instanceof ProviderError && error.code === "INVALID_REQUEST");
+  }
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("device registration accepts only the returned official device ID and never manufactures a fallback", async t => {
+  const payloads = [
+    { code: 0, data: { deviceId: "synthetic-unaccepted" } },
+    { code: 1, data: { deviceId: "" } },
+    { code: 1, data: { deviceId: 12345 } },
+    { code: 1, data: { id: "wrong-field" } },
+    { code: 1, deviceId: "wrong-level" },
+    { code: 1, data: { deviceId: "contains whitespace" } }
+  ];
+  const fetch = mockFetch(t, () => json(payloads.shift()));
+  for (let index = 0; index < 6; index++) await assert.rejects(registerDevice([], syntheticDevice()), error => error instanceof ProviderError && error.code === "INVALID_RESPONSE");
+  assert.equal(fetch.mock.callCount(), 6, "No registration retry or synthetic fallback is allowed");
+});
+
+test("device registration preserves verification errors and does not retry them", async t => {
+  const fetch = mockFetch(t, () => json({ private: "synthetic-only" }, 453));
+  await assert.rejects(registerDevice([], syntheticDevice()), error => error instanceof ProviderError && error.code === "VERIFICATION_REQUIRED" && error.httpStatus === 453 && !error.message.includes("synthetic-only"));
+  assert.equal(fetch.mock.callCount(), 1);
 });

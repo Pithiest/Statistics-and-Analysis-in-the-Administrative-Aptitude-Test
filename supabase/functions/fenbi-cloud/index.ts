@@ -1,4 +1,4 @@
-import { startQr, pollQr, getIdentity, readTree, readQuestionBatch, readAnswers, ProviderError } from "./provider.ts";
+import { startQr, pollQr, getIdentity, readTree, readQuestionBatch, readAnswers, registerDevice, ProviderError } from "./provider.ts";
 import type { CookieJar } from "./provider.ts";
 import { emptyMistakeNotebook, importFenbiExport, reuseUnchangedSource, mergeMistakeNotebooks, normalizeMistakeNotebook } from "../../../src/mistakes.ts";
 import type { MistakeNotebook } from "../../../src/mistakes.ts";
@@ -105,10 +105,13 @@ export async function workOne() {
   const row=claimed[0];let cursor=row.sync_cursor;
   const lease=`id=eq.${row.id}&locked_until=eq.${encodeURIComponent(row.locked_until)}`;
   let cookies:CookieJar|undefined;
+  let providerSession:any;
   try {
-    cookies=await unseal(row.session_cipher) as CookieJar;
+    providerSession=await unseal(row.session_cipher);
+    if(Array.isArray(providerSession))providerSession={cookies:providerSession};
+    cookies=providerSession.cookies as CookieJar;
     if(!cursor) {
-      const tree=await readTree(cookies);const ids=collectIds(tree);
+      const tree=await readTree(cookies,providerSession.deviceId);const ids=collectIds(tree);
       if(ids.length>10000)throw new HttpError(400,"错题数量超过当前单次同步范围，请联系网站维护者。");
       cursor={schemaVersion:1,exportedAt:now(),scope:{subject:"xingce",timeRange:0},tree,requestedQuestionIds:ids,batches:[],answers:[],warnings:[],complete:false};
     }
@@ -117,15 +120,15 @@ export async function workOne() {
       const active=await database(`${TABLE}?${lease}&select=id&limit=1`);
       if(!active?.length)return {processed:1,cancelled:true};
       const ids=cursor.requestedQuestionIds.slice(offset,offset+10);
-      const batch=await readQuestionBatch(cookies,ids);
+      const batch=await readQuestionBatch(cookies,ids,providerSession.deviceId);
       await new Promise(resolve=>setTimeout(resolve,400));
       if(!(await database(`${TABLE}?${lease}&select=id&limit=1`))?.length)return {processed:1,cancelled:true};
-      const answers=await readAnswers(cookies,ids);
+      const answers=await readAnswers(cookies,ids,providerSession.deviceId);
       cursor.batches.push(batch);cursor.answers.push(...answers);offset+=ids.length;
       await new Promise(resolve=>setTimeout(resolve,400));
     }
     if(offset<cursor.requestedQuestionIds.length) {
-      const saved=await patch(TABLE,lease,{session_cipher:await seal(cookies),sync_cursor:cursor,sync_state:"queued",locked_until:null,next_sync:now()});
+      const saved=await patch(TABLE,lease,{session_cipher:await seal({...providerSession,cookies}),sync_cursor:cursor,sync_state:"queued",locked_until:null,next_sync:now()});
       return saved.length?{processed:1,pending:true}:{processed:1,cancelled:true};
     }
     cursor.complete=true;
@@ -133,11 +136,12 @@ export async function workOne() {
     const next=importFenbiExport(cursor,previous);
     next.notebook=reuseUnchangedSource(previous,next.notebook);
     if(next.summary.warnings.length)throw new HttpError(503,"部分错题未完整返回，已保留上次成功数据。");
-    const saved=await patch(TABLE,lease,{session_cipher:await seal(cookies),notebook:next.notebook,sync_cursor:null,sync_state:"idle",last_sync:now(),next_sync:later(6*3600000),locked_until:null,last_error:null});
+    const saved=await patch(TABLE,lease,{session_cipher:await seal({...providerSession,cookies}),notebook:next.notebook,sync_cursor:null,sync_state:"idle",last_sync:now(),next_sync:later(6*3600000),locked_until:null,last_error:null});
     return saved.length?{processed:1,complete:true,count:next.notebook.questions.length}:{processed:1,cancelled:true};
   } catch(error) {
     const needsLogin=error instanceof ProviderError&&["AUTH_REQUIRED","VERIFICATION_REQUIRED"].includes(error.code);
-    const saved=await patch(TABLE,lease,{...(cookies?{session_cipher:await seal(cookies)}:{}),sync_cursor:cursor||null,sync_state:needsLogin?"reauth":"error",last_error:needsLogin?"粉笔登录或验证需要更新，请重新扫码连接。":"此次同步未完成，已保留上次成功数据。",locked_until:null,next_sync:later(3600000)});
+    const needsDevice=error instanceof ProviderError&&error.httpStatus===453;
+    const saved=await patch(TABLE,lease,{...(cookies?{session_cipher:await seal({...providerSession,cookies})}:{}),sync_cursor:cursor||null,sync_state:needsLogin?"reauth":"error",last_error:needsDevice?"粉笔要求设备验证。扫码已成功，完成设备登记后才能继续读取错题。":needsLogin?"粉笔登录或验证需要更新，请在官方页面完成验证后重新连接。":"此次同步未完成，已保留上次成功数据。",locked_until:null,next_sync:later(3600000)});
     return saved.length?{processed:1,complete:false,needsLogin}:{processed:1,cancelled:true};
   }
 }
@@ -163,8 +167,29 @@ export async function handler(req:Request):Promise<Response> {
     if(path==="/login/start"&&req.method==="POST")return response(await loginStart(req));
     if(path==="/login/poll"&&req.method==="POST")return response(await loginPoll(body));
     if(path==="/progress"&&req.method==="POST")return response(await saveProgress(req,body));
-    const {row,tokenHash}=await account(req,path!=="/notebook");
+    const {row,tokenHash}=await account(req,path!=="/notebook"&&path!=="/verify-device");
     if(path==="/progress"&&req.method==="GET") { const data=(await database(`${TABLE}?id=eq.${row.id}&select=progress,progress_revision&limit=1`))[0];return response({progress:data.progress,revision:data.progress_revision}); }
+    if(path==="/verify-device"&&req.method==="POST") {
+      if(row.sync_state!=="reauth"||!row.session_cipher||!row.last_error?.includes("设备验证"))throw new HttpError(409,"当前连接不需要设备登记。");
+      let session=await unseal(row.session_cipher);
+      if(Array.isArray(session))session={cookies:session};
+      if(session.deviceAttempted)throw new HttpError(409,"设备登记已经尝试过。请在粉笔官方页面完成所需验证，不能重复登记。");
+      const fields=["canvas","webgl","screen","language","platform","cores","memory","touchPoints"];
+      if(typeof body.startupId!=="string"||!/^\d{10,16}$/.test(body.startupId)||!body.extras||fields.some(f=>typeof body.extras[f]!=="string"||body.extras[f].length>1024))throw new HttpError(400,"浏览器设备信息不完整，请使用正常浏览器。");
+      session.deviceAttempted=true;
+      const reservation=await patch(TABLE,`id=eq.${row.id}&session_cipher=eq.${encodeURIComponent(row.session_cipher)}`,{session_cipher:await seal(session)});
+      if(!reservation.length)throw new HttpError(409,"连接已更新，请刷新后查看状态。");
+      const verificationLease=`id=eq.${row.id}&session_cipher=eq.${encodeURIComponent(reservation[0].session_cipher)}`;
+      try {
+        session.deviceId=await registerDevice(session.cookies,{startupId:body.startupId,extras:Object.fromEntries(fields.map(f=>[f,body.extras[f]])) as any});
+        const saved=await patch(TABLE,verificationLease,{session_cipher:await seal(session),sync_state:"queued",last_error:null,next_sync:now(),locked_until:null});
+        if(!saved.length)throw new HttpError(409,"连接已更改，请刷新后查看状态。");
+        queueWork();return response(status(saved[0]));
+      }catch(error) {
+        await patch(TABLE,verificationLease,{session_cipher:await seal(session),sync_state:"reauth",last_error:"粉笔设备验证未完成，需要在粉笔官方服务中继续验证；已停止重复尝试。"});
+        throw new HttpError(409,"粉笔设备验证未完成，需要官方验证；没有重复尝试。");
+      }
+    }
     if(path==="/account"&&req.method==="GET")return response(status(row));
     if(path==="/notebook"&&req.method==="GET")return response({notebook:withProgress(row.notebook,row.progress),account:status(row)});
     if(path==="/sync"&&req.method==="POST") {

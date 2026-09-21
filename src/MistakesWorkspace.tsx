@@ -8,9 +8,10 @@ import { readNotebook, writeNotebook } from "./mistakeStorage";
 import {
   disconnectFenbi, fenbiHealth, FENBI_SESSION_KEY, getFenbiAccount, getFenbiNotebook, getFenbiProgress, isFenbiSession, logoutFenbi,
   mistakeErrorMessage, MistakeApiError, pollFenbiLogin, readFenbiSession, saveFenbiProgress,
-  startFenbiLogin, storeFenbiSession, syncFenbiNow,
+  startFenbiLogin, storeFenbiSession, syncFenbiNow, verifyFenbiDevice,
 } from "./mistakeApi";
 import type { FenbiAccount, FenbiLoginChallenge, FenbiProgress, FenbiSession } from "./mistakeApi";
+import { collectFenbiBrowserExtras, FENBI_STARTUP_ID, hasAttemptedFenbiDevice, markFenbiDeviceAttempt } from "./fenbiDevice";
 import "./mistakes.css";
 
 const ANONYMOUS_KEY = "anonymous-local-imports";
@@ -265,6 +266,9 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect }: { sessio
   const [sending, setSending] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
+  const [deviceAttempted, setDeviceAttempted] = useState(() => hasAttemptedFenbiDevice(session.token));
+  const deviceAttemptedRef = useRef(deviceAttempted);
+  const [deviceMessage, setDeviceMessage] = useState("");
   const [pendingImport, setPendingImport] = useState<Awaited<ReturnType<typeof parseFile>> | null>(null);
   const lifetime = useRef(new AbortController());
   const active = useRef(true);
@@ -417,9 +421,31 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect }: { sessio
     } catch (failure) { handleError(failure); }
     finally { if (valid()) setActionBusy(false); }
   };
+  const verifyDevice = async () => {
+    if (actionBusy || deviceAttemptedRef.current || !navigator.onLine || !accountRef.current?.error?.includes("设备验证")) return;
+    deviceAttemptedRef.current = true; setDeviceAttempted(true);
+    if (!markFenbiDeviceAttempt(session.token)) {
+      setDeviceMessage("本次设备登记状态无法保存，已停止尝试。请在粉笔官方页面或 App 完成设备验证。"); return;
+    }
+    setActionBusy(true); setDeviceMessage("");
+    try {
+      const extras = collectFenbiBrowserExtras();
+      const verified = await verifyFenbiDevice(session.token, FENBI_STARTUP_ID, extras, lifetime.current.signal);
+      if (!valid()) return;
+      applyAccount(verified); setCloudError("");
+      setNotice("设备登记已提交，正在继续更新错题。");
+      await pollAccount();
+    } catch (failure) {
+      if (!valid()) return;
+      setDeviceMessage("这次设备登记未完成，已停止尝试。请在粉笔官方页面或 App 完成设备验证；不会自动重试或更换设备信息。");
+      if (failure instanceof MistakeApiError && failure.status === 401) callbacks.current.onExpired();
+    } finally { if (valid()) setActionBusy(false); }
+  };
+  const needsDeviceVerification = Boolean(account?.error?.includes("设备验证"));
   const syncing = account?.syncState === "queued" || account?.syncState === "syncing";
-  const needsLogin = account?.syncState === "reauth" || account?.syncState === "paused";
+  const needsLogin = !needsDeviceVerification && (account?.syncState === "reauth" || account?.syncState === "paused");
   const statusText = !online ? "当前离线，可继续复盘"
+    : needsDeviceVerification ? "粉笔要求完成设备验证"
     : account?.syncState === "syncing" ? `正在更新错题${account.total ? ` · ${account.loaded} / ${account.total}` : ""}`
     : account?.syncState === "queued" ? "已安排同步，正在等待更新"
     : account?.syncState === "reauth" ? "粉笔登录需要重新确认"
@@ -430,11 +456,12 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect }: { sessio
     <section className="panel mistake-account-panel">
       <div className="mistake-account-identity">{online ? <Cloud /> : <CloudOff />}<div><strong>{account?.displayName || "我的粉笔账号"}</strong><span role="status">{statusText}</span>{account?.nextSync && account.syncState === "idle" && <small>下次自动更新 {localTime(account.nextSync)}</small>}</div></div>
       <div className="mistake-account-actions">
-        {needsLogin ? <button type="button" className="soft-btn" onClick={() => callbacks.current.onReconnect()}>重新扫码连接</button> : <button type="button" className="soft-btn" disabled={!local.ready || !online || syncing || actionBusy} onClick={syncNow}><RefreshCw className={syncing ? "mistake-sync-spinning" : ""} />{syncing ? "正在同步" : "立即同步错题"}</button>}
+        {needsDeviceVerification ? <button type="button" className="soft-btn" disabled={!online || actionBusy || deviceAttempted} onClick={verifyDevice}>{actionBusy ? "正在登记设备…" : deviceAttempted ? "请完成官方验证" : "完成设备验证"}</button> : needsLogin ? <button type="button" className="soft-btn" onClick={() => callbacks.current.onReconnect()}>重新扫码连接</button> : <button type="button" className="soft-btn" disabled={!local.ready || !online || syncing || actionBusy} onClick={syncNow}><RefreshCw className={syncing ? "mistake-sync-spinning" : ""} />{syncing ? "正在同步" : "立即同步错题"}</button>}
         <details className="mistake-account-more"><summary>更多</summary><div><button type="button" disabled={actionBusy || !online || account?.syncState === "paused"} onClick={disconnect}>停止自动同步</button><button type="button" onClick={() => callbacks.current.onLogout()}>退出此账号</button></div></details>
       </div>
       <div className="mistake-progress-status" role="status">{sending ? "正在保存复盘进度到云端…" : pendingCount ? `${pendingCount} 道题的复盘进度待同步${!online ? "，联网后继续" : ""}` : "复盘先保存在本机，再同步到当前账号"}</div>
     </section>
+    {needsDeviceVerification && <div className="mistake-cloud-notice" role="status"><span>{account?.error}<br />使用当前浏览器完成粉笔要求的设备登记，不读取密码。{deviceMessage || (deviceAttempted ? "本次会话已尝试登记，请到粉笔官方页面或 App 完成验证。" : "仅在你点击后登记一次；未完成时停止尝试。")}</span><a href="https://www.fenbi.com/" target="_blank" rel="noopener noreferrer">打开粉笔官网</a></div>}
     {!online && <div className="mistake-cloud-notice">当前处于离线状态，已保存在本机的题目和笔记可以继续使用。</div>}
     {cloudError && <div className="mistake-storage-warning" role="alert"><span>{cloudError}</span><button type="button" className="soft-btn" disabled={!online || loading} onClick={() => void pull(true)}>重新连接</button></div>}
     <StorageWarning message={local.storageError} notebook={local.notebook} onRetry={!local.ready ? local.retryRead : undefined} />

@@ -3,10 +3,12 @@ export type CookieJar = Array<{ name: string; value: string; domain: string; pat
 export type ProviderErrorCode = "AUTH_REQUIRED" | "VERIFICATION_REQUIRED" | "RATE_LIMITED" | "NETWORK" | "PROVIDER_UNAVAILABLE" | "INVALID_RESPONSE" | "INVALID_REQUEST";
 export class ProviderError extends Error {
   code: ProviderErrorCode;
-  constructor(code: ProviderErrorCode, message: string) {
+  httpStatus?: number;
+  constructor(code: ProviderErrorCode, message: string, httpStatus?:number) {
     super(message);
     this.name = "ProviderError";
     this.code = code;
+    this.httpStatus = httpStatus;
   }
 }
 
@@ -23,6 +25,10 @@ export type FenbiQuestionBatch = {
   solutions: JsonObject[];
   materials: JsonObject[];
   q2subQuestionIds: unknown;
+};
+export type DeviceRegistration = {
+  startupId: string;
+  extras: { canvas: string; webgl: string; screen: string; language: string; platform: string; cores: string; memory: string; touchPoints: string };
 };
 
 const QR_ORIGIN = "https://ke.fenbi.com";
@@ -104,10 +110,10 @@ function receiveCookies(jar: CookieJar, headers: Headers, url: URL) {
 }
 
 function responseStatus(status: number): void {
-  if (status === 401 || status === 403) throw new ProviderError("AUTH_REQUIRED", "粉笔登录已失效，请重新扫码连接。");
-  if ([430, 432, 453].includes(status)) throw new ProviderError("VERIFICATION_REQUIRED", "粉笔要求在官方页面完成安全验证，请完成后重新连接。");
-  if (status === 429) throw new ProviderError("RATE_LIMITED", "粉笔暂时限制读取频率，请稍后再同步。");
-  if (status < 200 || status >= 300) throw new ProviderError("PROVIDER_UNAVAILABLE", "粉笔服务暂时无法读取，请稍后重试。");
+  if (status === 401 || status === 403) throw new ProviderError("AUTH_REQUIRED", "粉笔登录已失效，请重新扫码连接。",status);
+  if ([430, 432, 453].includes(status)) throw new ProviderError("VERIFICATION_REQUIRED", "粉笔要求在官方页面完成安全验证，请完成后重新连接。",status);
+  if (status === 429) throw new ProviderError("RATE_LIMITED", "粉笔暂时限制读取频率，请稍后再同步。",status);
+  if (status < 200 || status >= 300) throw new ProviderError("PROVIDER_UNAVAILABLE", "粉笔服务暂时无法读取，请稍后重试。",status);
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -169,9 +175,17 @@ async function request(url: URL, cookies: CookieJar, body?: JsonObject, cdn = fa
   return value;
 }
 
-function tikuUrl(path: string, params: Record<string, string>) {
+function validDeviceId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 2048 && !/[\s\u0000-\u001f\u007f]/.test(value);
+}
+
+function tikuUrl(path: string, params: Record<string, string>, deviceId?: string) {
   const url = new URL(path, TIKU_ORIGIN);
   for (const [key, value] of Object.entries({ app: "web", kav: "131", av: "134", hav: "128", version: "3.0.0.0", gav: "2", apcId: "0", ...params })) url.searchParams.set(key, value);
+  if (deviceId !== undefined && deviceId !== "") {
+    if (!validDeviceId(deviceId)) throw new ProviderError("INVALID_REQUEST", "设备登记信息无效，请重新连接。");
+    url.searchParams.set("deviceId", deviceId);
+  }
   return url;
 }
 
@@ -210,15 +224,32 @@ export async function getIdentity(cookies: CookieJar): Promise<{ providerId: str
   return { providerId: String(result.userId), displayName: result.identity.trim().slice(0, 120) };
 }
 
-export async function readTree(cookies: CookieJar): Promise<FenbiTreeNode[]> {
-  const result = await request(tikuUrl("/api/xingce/errors/keypoint-tree", { timeRange: "0", order: "desc" }), cookies);
+/** Forward the real browser's official collector output once; never synthesize device properties server-side. */
+export async function registerDevice(cookies: CookieJar, input: DeviceRegistration): Promise<string> {
+  if (!object(input) || typeof input.startupId !== "string" || !input.startupId.trim() || input.startupId.length > 2048 || /[\u0000-\u001f\u007f]/.test(input.startupId) || !object(input.extras)) {
+    throw new ProviderError("INVALID_REQUEST", "请在当前浏览器重新完成设备登记。");
+  }
+  const fields = ["canvas", "webgl", "screen", "language", "platform", "cores", "memory", "touchPoints"] as const;
+  const extras: Record<string, string> = {};
+  for (const field of fields) {
+    const value = input.extras[field];
+    if (typeof value !== "string" || value.length > 4096 || /[\u0000-\u001f\u007f]/.test(value)) throw new ProviderError("INVALID_REQUEST", "设备登记信息不完整，请在当前浏览器重试。");
+    extras[field] = value;
+  }
+  const result = await request(new URL("/api/users/device/sid/create", LOGIN_ORIGIN), cookies, { pf: "web", startupId: input.startupId, extras });
+  if (!object(result) || result.code !== 1 || !object(result.data) || !validDeviceId(result.data.deviceId)) throw invalidResponse();
+  return result.data.deviceId;
+}
+
+export async function readTree(cookies: CookieJar, deviceId?: string): Promise<FenbiTreeNode[]> {
+  const result = await request(tikuUrl("/api/xingce/errors/keypoint-tree", { timeRange: "0", order: "desc" }, deviceId), cookies);
   if (!Array.isArray(result) || result.some(node => !object(node))) throw invalidResponse();
   return result as FenbiTreeNode[];
 }
 
-export async function readQuestionBatch(cookies: CookieJar, ids: Array<string | number>): Promise<FenbiQuestionBatch> {
+export async function readQuestionBatch(cookies: CookieJar, ids: Array<string | number>, deviceId?: string): Promise<FenbiQuestionBatch> {
   const normalized = requestedIds(ids);
-  let result = await request(tikuUrl("/api/xingce/universal/auth/solutions", { type: "1", questionIds: normalized.join(",") }), cookies);
+  let result = await request(tikuUrl("/api/xingce/universal/auth/solutions", { type: "1", questionIds: normalized.join(",") }, deviceId), cookies);
   if (object(result) && Array.isArray(result.cdnUrls) && result.cdnUrls.length) {
     let found: unknown = null;
     for (const candidate of result.cdnUrls.slice(0, 2)) {
@@ -240,9 +271,9 @@ export async function readQuestionBatch(cookies: CookieJar, ids: Array<string | 
   return { requestedIds: normalized, solutions: result.solutions as JsonObject[], materials: (result.materials || []) as JsonObject[], q2subQuestionIds: result.q2subQuestionIds ?? null };
 }
 
-export async function readAnswers(cookies: CookieJar, ids: Array<string | number>): Promise<JsonObject[]> {
+export async function readAnswers(cookies: CookieJar, ids: Array<string | number>, deviceId?: string): Promise<JsonObject[]> {
   const normalized = requestedIds(ids);
-  const result = await request(tikuUrl("/api/xingce/user-answers", { ids: normalized.join(",") }), cookies);
+  const result = await request(tikuUrl("/api/xingce/user-answers", { ids: normalized.join(",") }, deviceId), cookies);
   if (!Array.isArray(result) || result.some(answer => !object(answer) || !normalized.includes(String(answer.questionId)) || !object(answer.answer))) throw invalidResponse();
   return result as JsonObject[];
 }

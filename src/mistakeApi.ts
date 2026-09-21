@@ -1,4 +1,5 @@
 import type { MistakeNotebook, MistakeQuestion } from "./mistakes";
+import type { FenbiBrowserExtras } from "./fenbiDevice";
 
 const CLOUD_URL = "https://atwsraivphybkfmyeubd.supabase.co/functions/v1/fenbi-cloud";
 export const FENBI_SESSION_KEY = "pithiest-xingce-fenbi-session-v1";
@@ -77,6 +78,7 @@ async function request<T>(path: string, options: { token?: string; body?: unknow
     });
     if (!response.ok) {
       const message = response.status === 401 ? "登录已失效，请重新用粉笔 App 扫码登录。"
+         : response.status === 409 && path === "/verify-device" ? "此次设备登记未完成，已停止尝试。请在粉笔官方页面或 App 完成设备验证。"
         : response.status === 429 ? "请求较频繁，请稍等片刻再试。"
         : response.status === 413 ? "这次同步内容过大，请先导出备份，再重试。"
         : response.status >= 500 ? "云端同步暂时不可用，请稍后重试。已有记录会保留。"
@@ -104,3 +106,8 @@ export const saveFenbiProgress = (token: string, progress: FenbiProgress[], sign
 export const syncFenbiNow = (token: string, signal?: AbortSignal) => request<Record<string, unknown>>("/sync", { token, body: {}, signal });
 export const logoutFenbi = (token: string, signal?: AbortSignal) => request<Record<string, unknown>>("/logout", { token, body: {}, signal });
 export const disconnectFenbi = (token: string, signal?: AbortSignal) => request<Record<string, unknown>>("/disconnect", { token, body: {}, signal });
+
+export async function verifyFenbiDevice(token: string, startupId: string, extras: FenbiBrowserExtras, signal?: AbortSignal): Promise<FenbiAccount> {
+  const result = await request<FenbiAccount | { account: FenbiAccount }>("/verify-device", { token, body: { startupId, extras }, signal });
+  return "account" in result ? result.account : result;
+}
