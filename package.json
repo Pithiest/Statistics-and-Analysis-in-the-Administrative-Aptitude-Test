@@ -1,16 +1,17 @@
 {
   "name": "xingce-training-cockpit",
   "private": true,
-  "version": "3.3.0",
+  "version": "3.4.0",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/prepare-source.mjs && vite --host 127.0.0.1",
-    "build": "node scripts/prepare-source.mjs && tsc && vite build",
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
     "build:local": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --experimental-strip-types --test tests/dashboard.test.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "source:pack": "node scripts/build-source-payload.mjs"
+    "source:pack": "node scripts/build-source-payload.mjs",
+    "source:restore": "node scripts/prepare-source.mjs --restore"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -23,5 +24,8 @@
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=22.18.0"
   }
 }

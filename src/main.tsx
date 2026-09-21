@@ -81,7 +81,7 @@ if (import.meta.env.DEV && "serviceWorker" in navigator) {
 
 function registerServiceWorker() {
   const hadController = Boolean(navigator.serviceWorker.controller);
-  let refreshing = false;
+  let updateNotified = false;
 
   window.addEventListener("load", () => {
     navigator.serviceWorker
@@ -105,9 +105,9 @@ function registerServiceWorker() {
   });
 
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (!hadController || refreshing) return;
-    refreshing = true;
-    window.location.reload();
+    if (!hadController || updateNotified) return;
+    updateNotified = true;
+    window.dispatchEvent(new CustomEvent("xingce:update-ready"));
   });
 }
 

@@ -1,4 +1,6 @@
 import {
+  ArrowRight,
+  CalendarDays,
   BarChart3,
   CheckCircle2,
   Cloud,
@@ -15,6 +17,7 @@ import {
 } from "./icons";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { flushSync } from "react-dom";
 import {
   DEFAULT_FORM,
   DEFAULT_SETTINGS,
@@ -60,6 +63,8 @@ const SettingsRoute = lazy(() => import("./Views").then((module) => ({ default: 
 type CoverageData = ReturnType<typeof dashboard>["coverage"];
 
 export function App() {
+  const [hydrated, setHydrated] = useState(false);
+  const [openingView, setOpeningView] = useState<ViewId | null>(null);
   const [view, setView] = useState<ViewId>("today");
   const [records, setRecords] = useState<TrainingRecord[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -67,6 +72,9 @@ export function App() {
   const [syncState, setSyncState] = useState<SyncState>("local");
   const [lastSync, setLastSync] = useState("");
   const [toast, setToast] = useState("");
+  const [undoRecord, setUndoRecord] = useState<TrainingRecord | null>(null);
+  const [storageFailures, setStorageFailures] = useState<string[]>([]);
+  const [updateReady, setUpdateReady] = useState(false);
   const [form, setForm] = useState<EntryForm>({ ...DEFAULT_FORM, date: today() });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
@@ -87,9 +95,11 @@ export function App() {
   const lastPullRef = useRef(0);
   const changeVersionRef = useRef(0);
   const debounceRef = useRef<number>();
-  const recordsHydratedRef = useRef(false);
-  const settingsHydratedRef = useRef(false);
-  const codeHydratedRef = useRef(false);
+  const toastTimerRef = useRef<number>();
+  const elapsedMsRef = useRef(0);
+  const timerStartedRef = useRef<number | null>(null);
+  const navigationVersionRef = useRef(0);
+  const transitionRef = useRef<{ skipTransition: () => void } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +114,7 @@ export function App() {
       setSettings(loaded.settings);
       setSpaceCode(loaded.spaceCode);
       setSyncState(loaded.spaceCode ? "syncing" : "local");
+      setHydrated(true);
     };
     const frameId = window.requestAnimationFrame(() => {
       timeoutId = window.setTimeout(hydrate, 0);
@@ -120,37 +131,29 @@ export function App() {
 
   useEffect(() => {
     recordsRef.current = records;
-    if (!recordsHydratedRef.current) {
-      recordsHydratedRef.current = true;
-      return;
-    }
-    saveRecords(records);
-  }, [records]);
+    if (!hydrated) return;
+    reportStorage("训练记录", saveRecords(records));
+  }, [records, hydrated]);
 
   useEffect(() => {
     settingsRef.current = settings;
+    if (!hydrated) return;
     document.documentElement.dataset.theme = settings.theme;
-    if (!settingsHydratedRef.current) {
-      settingsHydratedRef.current = true;
-      return;
-    }
-    saveSettings(settings);
-  }, [settings]);
+    reportStorage("设置", saveSettings(settings));
+  }, [settings, hydrated]);
 
   useEffect(() => {
     codeRef.current = spaceCode;
-    if (!codeHydratedRef.current) {
-      codeHydratedRef.current = true;
-      return;
-    }
-    saveSpaceCode(spaceCode);
-  }, [spaceCode]);
+    if (!hydrated) return;
+    reportStorage("空间码", saveSpaceCode(spaceCode));
+  }, [spaceCode, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
     const persist = () => {
-      saveRecords(recordsRef.current);
-      saveSettings(settingsRef.current);
-      saveSpaceCode(codeRef.current);
+      reportStorage("训练记录", saveRecords(recordsRef.current));
+      reportStorage("设置", saveSettings(settingsRef.current));
+      reportStorage("空间码", saveSpaceCode(codeRef.current));
     };
     if ("requestIdleCallback" in window) {
       const id = window.requestIdleCallback(persist, { timeout: 5000 });
@@ -158,7 +161,7 @@ export function App() {
     }
     const id = globalThis.setTimeout(persist, 2500);
     return () => globalThis.clearTimeout(id);
-  }, []);
+  }, [hydrated]);
 
   useEffect(() => {
     if (!spaceCode) return undefined;
@@ -179,25 +182,82 @@ export function App() {
   }, [spaceCode]);
 
   useEffect(() => {
-    if (!timerOn) return undefined;
-    const id = window.setInterval(() => setTimer((value) => value + 1), 1000);
-    return () => window.clearInterval(id);
+    if (!timerOn) return;
+    const update = () => setTimer(Math.floor(currentElapsedMs() / 1000));
+    const id = window.setInterval(update, 250);
+    window.addEventListener("visibilitychange", update);
+    return () => { window.clearInterval(id); window.removeEventListener("visibilitychange", update); };
   }, [timerOn]);
 
-  function notify(message: string) {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2400);
+  useEffect(() => {
+    const ready = () => setUpdateReady(true);
+    window.addEventListener("xingce:update-ready", ready);
+    return () => {
+      window.removeEventListener("xingce:update-ready", ready);
+      window.clearTimeout(toastTimerRef.current);
+      window.clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  function reportStorage(key: string, success: boolean) {
+    setStorageFailures((current) => {
+      const next = success ? current.filter((item) => item !== key) : current.includes(key) ? current : [...current, key];
+      return next.length === current.length && next.every((item, index) => item === current[index]) ? current : next;
+    });
   }
 
-  function navigate(next: ViewId) {
-    if (next === view) return;
-    const update = () => setView(next);
-    const doc = document as Document & { startViewTransition?: (callback: () => void) => void };
-    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && doc.startViewTransition) {
-      doc.startViewTransition(update);
-      return;
+  function currentElapsedMs() {
+    return elapsedMsRef.current + (timerStartedRef.current === null ? 0 : Math.max(0, Date.now() - timerStartedRef.current));
+  }
+
+  function toggleTimer() {
+    if (timerStartedRef.current !== null) {
+      elapsedMsRef.current = currentElapsedMs();
+      timerStartedRef.current = null;
+      setTimer(Math.floor(elapsedMsRef.current / 1000));
+      setTimerOn(false);
+    } else {
+      timerStartedRef.current = Date.now();
+      setTimerOn(true);
     }
-    update();
+  }
+
+  function resetTimer() {
+    elapsedMsRef.current = 0;
+    timerStartedRef.current = null;
+    setTimer(0);
+    setTimerOn(false);
+  }
+
+  function notify(message: string) {
+    window.clearTimeout(toastTimerRef.current);
+    setUndoRecord(null);
+    setToast(message);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), 3600);
+  }
+
+  async function navigate(next: ViewId) {
+    const version = ++navigationVersionRef.current;
+    transitionRef.current?.skipTransition();
+    if (next === view) { setOpeningView(null); return; }
+    setOpeningView(next);
+    try {
+      await preloadView(next);
+      if (version !== navigationVersionRef.current) return;
+      const update = () => {
+        if (version !== navigationVersionRef.current) return;
+        flushSync(() => { setView(next); setOpeningView(null); });
+        window.scrollTo({ top: 0, behavior: "instant" });
+      };
+      const doc = document as Document & { startViewTransition?: (callback: () => void) => { skipTransition: () => void } };
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches && doc.startViewTransition) {
+        transitionRef.current = doc.startViewTransition(update);
+      } else update();
+    } catch {
+      if (version !== navigationVersionRef.current) return;
+      setOpeningView(null);
+      notify("页面暂时未能加载，请稍后重试。当前记录已保留。");
+    }
   }
 
   function scheduleSync() {
@@ -276,8 +336,7 @@ export function App() {
     }
     setRecords((list) => (previous ? list.map((item) => (item.id === previous.id ? nextRecord : item)) : [nextRecord, ...list]));
     setEditingId(null);
-    setTimer(0);
-    setTimerOn(false);
+    resetTimer();
     setForm((old) => {
       if (continueInput && !previous) {
         return { ...old, correct: "", errorReason: "无", note: "", tags: "", date: old.date || today() };
@@ -285,7 +344,7 @@ export function App() {
       return { ...DEFAULT_FORM, date: today() };
     });
     scheduleSync();
-    notify(spaceCode ? "已保存，后台会自动同步。" : "已保存到本机。");
+    notify("训练已记录，可继续录入或到台账查看。");
   }
 
   function edit(record: TrainingRecord) {
@@ -302,7 +361,7 @@ export function App() {
       note: record.note
     });
     navigate("record");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "instant" });
   }
 
   function softDelete(record: TrainingRecord) {
@@ -310,6 +369,17 @@ export function App() {
     setRecords((list) => list.map((item) => (item.id === record.id ? { ...item, deletedAt: now, updatedAt: now } : item)));
     scheduleSync();
     notify("记录已删除。");
+    setUndoRecord(record);
+    window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => { setToast(""); setUndoRecord(null); }, 8000);
+  }
+
+  function undoDelete() {
+    if (!undoRecord) return;
+    const restored = { ...undoRecord, deletedAt: null, updatedAt: new Date().toISOString() };
+    setRecords((list) => list.map((item) => item.id === restored.id ? restored : item));
+    scheduleSync();
+    notify("记录已恢复。");
   }
 
   function markReviewed(record: TrainingRecord) {
@@ -368,11 +438,12 @@ export function App() {
   }
 
   function fillDurationFromTimer() {
-    if (!timer) {
+    const elapsedSeconds = Math.floor(currentElapsedMs() / 1000);
+    if (!elapsedSeconds) {
       notify("先开始计时，再填入用时。");
       return;
     }
-    setForm((old) => ({ ...old, duration: String(Math.max(1, Math.ceil(timer / 60))) }));
+    setForm((old) => ({ ...old, duration: String(Math.max(1, Math.ceil(elapsedSeconds / 60))) }));
     notify("已把计时结果填入用时。");
   }
 
@@ -405,13 +476,15 @@ export function App() {
             <span>记录 · 诊断 · 复盘</span>
           </div>
         </div>
-        <nav className="side-nav">
+        <nav className="side-nav" aria-label="主导航">
           {nav.map((item) => (
             <button
               key={item.id}
               className={view === item.id ? "active" : ""}
-              onPointerEnter={() => preloadView(item.id)}
-              onFocus={() => preloadView(item.id)}
+              aria-current={view === item.id ? "page" : undefined}
+              aria-busy={openingView === item.id}
+              onPointerEnter={() => void preloadView(item.id).catch(() => {})}
+              onFocus={() => void preloadView(item.id).catch(() => {})}
               onClick={() => navigate(item.id)}
             >
               {item.icon}
@@ -420,37 +493,38 @@ export function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="sync-card">
+          <button className="sync-card" onClick={() => navigate("settings")} title="查看同步设置">
             <SyncIcon state={syncState} />
             <div>
-              <strong>{syncLabel(syncState)}</strong>
+              <strong>{storageFailures.length ? "本机保存受限" : syncLabel(syncState)}</strong>
               <span>{syncHint(syncState, spaceCode, lastSync)}</span>
             </div>
-          </div>
+          </button>
           <span className="creator-mark">Pithiest巨献</span>
         </div>
       </aside>
 
       <main className="workspace">
+        {storageFailures.length > 0 && <div className="notice-banner is-warning" role="alert"><div><strong>本机保存遇到问题</strong><span>{storageFailures.join("、")}目前只留在本次页面，请先导出备份再关闭。</span></div><button className="soft-btn" onClick={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 7, records, settings }, null, 2), "application/json;charset=utf-8")} >导出备份</button></div>}
+        {updateReady && <div className="notice-banner" role="status"><div><strong>新版本已就绪</strong><span>保存当前训练后，刷新即可使用。</span></div><button className="soft-btn" onClick={() => window.location.reload()}>刷新使用</button></div>}
         <header className="topbar">
           <div>
-            <p>行测训练统计</p>
+            <p className="workspace-eyebrow"><span>行测数据舱</span><span className="header-date"><CalendarDays />{new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span></p>
             <h1>{title(view)}</h1>
           </div>
           <div className="top-actions">
-            <button className="icon-btn" onClick={() => updateSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark" }, false)} title="切换主题">
+            <button className="icon-btn" aria-label={settings.theme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => updateSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark" }, false)} title="切换主题">
               {settings.theme === "dark" ? <Sun /> : <Moon />}
             </button>
             <button className="soft-btn" onClick={() => navigate("settings")}>
-              <KeyRound /> 空间码
+              <SyncIcon state={syncState} /> {storageFailures.length ? "保存受限" : syncLabel(syncState)}
             </button>
-            <button className="primary-btn" onClick={() => navigate("record")}>
-              <Plus /> 录入
-            </button>
+            {view !== "today" && view !== "record" && <button className="primary-btn" onClick={() => navigate("record")}><Plus /> 录入训练</button>}
           </div>
         </header>
 
-        <section key={view} className="page">
+        <section key={view} className="page" aria-label={title(view)} aria-busy={!hydrated || openingView !== null}>
+          {!hydrated ? <div className="panel route-loading" role="status"><RefreshCw className="spin" />正在恢复本机记录</div> : (
           <Suspense fallback={<div className="panel route-loading"><RefreshCw className="spin" /> 正在打开页面</div>}>
             {view === "today" && (
               <Today
@@ -475,11 +549,8 @@ export function App() {
                 editing={Boolean(editingId)}
                 timer={timer}
                 timerOn={timerOn}
-                onTimer={() => setTimerOn((value) => !value)}
-                onResetTimer={() => {
-                  setTimer(0);
-                  setTimerOn(false);
-                }}
+                onTimer={toggleTimer}
+                onResetTimer={resetTimer}
                 onUseTimer={fillDurationFromTimer}
                 onAddTemplate={addTemplate}
                 onApplyTemplate={applyTemplate}
@@ -556,16 +627,19 @@ export function App() {
               />
             )}
           </Suspense>
+          )}
         </section>
       </main>
 
-      <nav className="mobile-nav">
+      <nav className="mobile-nav" aria-label="主导航">
         {nav.map((item) => (
           <button
             key={item.id}
             className={view === item.id ? "active" : ""}
-            onPointerEnter={() => preloadView(item.id)}
-            onFocus={() => preloadView(item.id)}
+            aria-current={view === item.id ? "page" : undefined}
+            aria-busy={openingView === item.id}
+            onPointerEnter={() => void preloadView(item.id).catch(() => {})}
+            onFocus={() => void preloadView(item.id).catch(() => {})}
             onClick={() => navigate(item.id)}
           >
             {item.icon}
@@ -574,7 +648,7 @@ export function App() {
         ))}
       </nav>
 
-      {toast && <div className="toast">{toast}</div>}
+      <div className={toast ? "toast is-visible" : "toast"} role="status" aria-live="polite" aria-atomic="true"><span className="toast-dot" />{toast}{undoRecord && <button onClick={undoDelete}>撤销</button>}</div>
     </div>
   );
 }
@@ -599,14 +673,14 @@ function Today({
   const topUndertrained = data.coverage.undertrained[0];
   const topStale = data.coverage.stale[0];
   const heroTitle = !data.total
-    ? "先建立第一条训练记录"
+    ? "从第一组训练开始"
     : !data.todayTotal
       ? "今天还没记录训练"
     : remaining
       ? `今天还差 ${remaining} 题`
       : "今日题量已达标";
   const heroDetail = !data.total
-    ? "录入一组真实训练后，系统会开始判断题量、正确率、错因和配速。"
+    ? "记录题量、用时和错因，让下一次练习更有方向。"
     : !data.todayTotal
       ? `近 7 天 ${data.weekTotal} 题，当前弱项 ${data.weak?.short || "待判断"}，先把今天的第一组样本补上。`
     : rateGap
@@ -614,26 +688,24 @@ function Today({
       : `今日正确率 ${data.todayRate}%，继续保持复盘节奏。`;
   return (
     <div className="stack dashboard-stack">
-      <section className="command-surface">
+      <section className={`command-surface ${!data.total ? "is-empty" : ""}`}>
         <div className="command-head">
           <div>
             <p className="section-kicker">今日行动</p>
             <h2>{heroTitle}</h2>
             <span>{heroDetail}</span>
+            <div className="command-actions">
+            <button className="primary-btn" onClick={onRecord}><Plus /> {data.total ? "录入训练" : "记录第一组"}<ArrowRight /></button>
+            {data.pending.length > 0 && <button className="soft-btn" onClick={onReview}><ListChecks /> 复盘 {data.pending.length} 条</button>}
+            </div>
           </div>
-          <div className="command-actions">
-            <button className="primary-btn" onClick={onRecord}><Plus /> 录入训练</button>
-            <button className="soft-btn" onClick={onReview}><ListChecks /> 处理复盘</button>
+          <div className="daily-progress" aria-label={`今日已完成 ${data.todayTotal} 题，目标 ${settings.dailyGoal} 题`}>
+            <svg viewBox="0 0 120 120" aria-hidden="true"><circle className="progress-track" cx="60" cy="60" r="52" /><circle className="progress-value" cx="60" cy="60" r="52" pathLength="100" strokeDasharray="100" strokeDashoffset={100 - Math.min(100, data.goalDone)} /></svg>
+            <div><strong>{data.todayTotal}<small>题</small></strong><span>今日目标 {settings.dailyGoal}</span></div>
           </div>
         </div>
 
         <div className="signal-strip">
-          <SignalMetric
-            label="今日进度"
-            value={`${data.todayTotal}/${settings.dailyGoal}`}
-            hint={`${data.goalDone}% · ${data.todayRate || 0}% 正确率`}
-            progress={data.goalDone}
-          />
           <SignalMetric
             label="近 7 天题量"
             value={data.weekTotal}
@@ -642,15 +714,15 @@ function Today({
           />
           <SignalMetric
             label="近 7 天正确率"
-            value={`${data.weekRate}%`}
-            hint={`${signed(data.comparison.rateDelta)} 个点 / 上周期`}
-            tone={deltaTone(data.comparison.rateDelta)}
+            value={data.weekTotal ? `${data.weekRate}%` : "—"}
+            hint={!data.weekTotal ? "有训练后开始计算" : data.comparison.previousTotal ? `${signed(data.comparison.rateDelta)} 个点 / 上周期` : "上周期暂无样本"}
+            tone={data.comparison.previousTotal ? deltaTone(data.comparison.rateDelta) : "neutral"}
           />
           <SignalMetric
             label="复盘完成"
-            value={`${data.review.completionRate}%`}
-            hint={`${data.review.pending} 条待处理`}
-            tone={data.review.pending ? "warning" : "good"}
+            value={data.review.total ? `${data.review.completionRate}%` : "—"}
+            hint={data.review.total ? `${data.review.pending} 条待处理` : "还没有待复盘记录"}
+            tone={!data.review.total ? "neutral" : data.review.pending ? "warning" : "good"}
           />
           <SignalMetric
             label="连续训练"
@@ -659,7 +731,7 @@ function Today({
           />
         </div>
 
-        <div className="command-core">
+        {data.total > 0 ? <div className="command-core">
           <div className="trend-surface">
             <div className="panel-head compact-head">
               <div><h3>14 天训练走势</h3><span>题量与正确率</span></div>
@@ -685,17 +757,21 @@ function Today({
             </dl>
             <p className="daily-quote">{data.quote}</p>
           </aside>
-        </div>
+        </div> : <div className="getting-started">
+          <div><span>01</span><div><strong>记录一组</strong><p>题量、正确数、用时</p></div><Plus /></div>
+          <div><span>02</span><div><strong>找到薄弱点</strong><p>按模块和题型查看诊断</p></div><BarChart3 /></div>
+          <div><span>03</span><div><strong>复盘再练</strong><p>把错因变成下一步行动</p></div><ListChecks /></div>
+        </div>}
       </section>
 
       <section className="surface-section module-health-surface">
         <div className="panel-head">
-          <div><h3>模块健康矩阵</h3><span>健康度综合正确率、配速、样本、训练新鲜度与复盘完成情况</span></div>
-          <strong className="matrix-score">{Math.round(data.moduleStats.reduce((sum, item) => sum + item.health, 0) / data.moduleStats.length)}<small>/100</small></strong>
+          <div><h3>各模块表现</h3><span>{data.total ? "综合正确率、配速、样本与复盘情况 · 点击模块查看诊断" : "从任意模块开始积累，点击查看各题型"}</span></div>
+          {data.total > 0 && <strong className="matrix-score">{Math.round(data.moduleStats.reduce((sum, item) => sum + item.health, 0) / data.moduleStats.length)}<small>综合健康度 /100</small></strong>}
         </div>
-        <div className="module-health-grid">
+        <div className={`module-health-grid ${!data.total ? "no-chart" : ""}`}>
           <ModuleOpsTable rows={data.moduleStats} onDiagnose={onDiagnose} />
-          <div className="radar-surface">
+          {data.total > 0 && <div className="radar-surface">
             {data.total ? (
               <ChartBox compact>
                 <DeferredChart>
@@ -703,10 +779,11 @@ function Today({
                 </DeferredChart>
               </ChartBox>
             ) : <Empty text="录入后生成模块矩阵。" />}
-          </div>
+          </div>}
         </div>
       </section>
 
+      {data.total > 0 && <>
       <section className="operations-grid">
         <section className="surface-section">
           <div className="panel-head"><div><h3>训练编排</h3><span>题量覆盖、久未训练和下一步安排</span></div></div>
@@ -734,6 +811,8 @@ function Today({
           <ul className="advice compact-list">{data.recommendations.map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
       </section>
+      </>}
+      <footer className="dashboard-note">每一次记录，都是下一次进步的依据。<span>本机保存 · 空间码同步</span></footer>
     </div>
   );
 }
@@ -763,13 +842,13 @@ function ModuleOpsTable({ rows, onDiagnose }: {
     <div className="ops-table">
       <div className="ops-head"><span>模块</span><span>健康度</span><span>正确率</span><span>题量</span><span>最近训练</span><span>复盘</span></div>
       {rows.map((item) => (
-        <button className="ops-row" key={item.id} onClick={() => onDiagnose(item.name)}>
+        <button className="ops-row" data-empty={!item.total} key={item.id} onClick={() => onDiagnose(item.name)}>
           <span><i style={{ background: item.accent }} /><b>{item.name}</b></span>
-          <strong><em style={{ width: `${item.health}%` }} /><b className="health-value">{item.health}</b></strong>
-          <b>{item.total ? `${item.rate}%` : "--"}</b>
-          <b>{item.total}</b>
-          <small>{item.lastDate ? `${item.freshness} 分` : "未训练"}</small>
-          <small className={item.pending ? "status-alert" : ""}>{item.pending || 0}</small>
+          <strong><em style={{ width: `${item.health}%` }} /><b className="health-value">{item.total ? item.health : "待积累"}</b></strong>
+          <b className="ops-rate">{item.total ? `${item.rate}%` : "--"}</b>
+          <b className="ops-volume">{item.total}</b>
+          <small className="ops-date">{item.lastDate ? item.lastDate.slice(5).replace("-", "/") : "未训练"}</small>
+          <small className={`ops-pending ${item.pending ? "status-alert" : ""}`}>{item.pending || 0}</small>
         </button>
       ))}
     </div>
@@ -787,9 +866,8 @@ function deltaTone(value: number): "neutral" | "good" | "bad" {
 }
 
 function preloadView(view: ViewId) {
-  if (view === "today") return;
-  void import("./Views");
-  if (view === "diagnosis") void import("./Charts");
+  if (view === "today") return Promise.resolve();
+  return import("./Views");
 }
 
 function ReviewPreview({ records, onReview }: { records: TrainingRecord[]; onReview: () => void }) {

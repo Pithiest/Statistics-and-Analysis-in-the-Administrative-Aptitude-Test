@@ -1,6 +1,6 @@
 import {
   Area,
-  AreaChart,
+  ComposedChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -40,17 +40,17 @@ export function OverviewTrendChart({ data, targetRate }: { data: TrendDatum[]; t
   const showRateDots = data.filter((item) => item.rate !== null).length < 4;
   return (
     <ResponsiveContainer>
-      <AreaChart data={data}>
+      <ComposedChart data={data}>
         <CartesianGrid strokeDasharray="3 3" vertical={false} />
         <XAxis dataKey="label" tickLine={false} axisLine={false} />
         <YAxis yAxisId="left" tickLine={false} axisLine={false} />
         <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} domain={[0, 100]} />
-        <Tooltip formatter={chartFormatter} />
+        <Tooltip formatter={chartFormatter} contentStyle={{ background: "var(--panel-solid)", border: "1px solid var(--line)", borderRadius: 10, color: "var(--text)", fontSize: 12, boxShadow: "var(--shadow)" }} labelStyle={{ color: "var(--muted)", marginBottom: 6 }} />
         <Legend verticalAlign="top" height={28} />
         <ReferenceLine yAxisId="right" y={targetRate} stroke="#64748b" strokeDasharray="4 4" />
         <Area yAxisId="left" type="monotone" dataKey="total" name="题量" stroke="#2563eb" fill="#2563eb22" isAnimationActive={false} />
         <Line yAxisId="right" type="monotone" dataKey="rate" name="正确率" stroke="#0f766e" strokeWidth={2.4} dot={showRateDots ? { r: 3 } : false} connectNulls isAnimationActive={false} />
-      </AreaChart>
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }
@@ -63,7 +63,7 @@ export function ModuleRadarChart({ data }: { data: RadarDatum[] }) {
         <PolarAngleAxis dataKey="module" />
         <PolarRadiusAxis angle={90} domain={[0, 100]} tickCount={5} />
         <Radar dataKey="健康度" stroke="#2563eb" fill="#2563eb" fillOpacity={0.18} strokeWidth={2} isAnimationActive={false} />
-        <Tooltip formatter={chartFormatter} />
+        <Tooltip formatter={chartFormatter} contentStyle={{ background: "var(--panel-solid)", border: "1px solid var(--line)", borderRadius: 10, color: "var(--text)", fontSize: 12, boxShadow: "var(--shadow)" }} labelStyle={{ color: "var(--muted)", marginBottom: 6 }} />
       </RadarChart>
     </ResponsiveContainer>
   );
@@ -78,7 +78,7 @@ export function ModuleTrendChart({ data, targetRate }: { data: TrendDatum[]; tar
         <XAxis dataKey="label" tickLine={false} axisLine={false} />
         <YAxis yAxisId="left" tickLine={false} axisLine={false} domain={[0, 100]} />
         <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} />
-        <Tooltip formatter={chartFormatter} />
+        <Tooltip formatter={chartFormatter} contentStyle={{ background: "var(--panel-solid)", border: "1px solid var(--line)", borderRadius: 10, color: "var(--text)", fontSize: 12, boxShadow: "var(--shadow)" }} labelStyle={{ color: "var(--muted)", marginBottom: 6 }} />
         <Legend verticalAlign="top" height={28} />
         <ReferenceLine yAxisId="left" y={targetRate} stroke="#64748b" strokeDasharray="4 4" />
         <Line yAxisId="left" type="monotone" dataKey="rate" name="正确率" stroke="#2563eb" strokeWidth={2.6} dot={showDots ? { r: 3 } : false} connectNulls isAnimationActive={false} />
@@ -96,7 +96,7 @@ export function SubTypeBarChart({ data }: { data: SubTypeDatum[] }) {
         <CartesianGrid strokeDasharray="3 3" horizontal={!vertical} vertical={vertical} />
         <XAxis type={vertical ? "number" : "category"} dataKey={vertical ? undefined : "name"} tickLine={false} axisLine={false} domain={vertical ? [0, 100] : undefined} />
         <YAxis type={vertical ? "category" : "number"} dataKey={vertical ? "name" : undefined} tickLine={false} axisLine={false} width={82} domain={vertical ? undefined : [0, 100]} />
-        <Tooltip formatter={chartFormatter} />
+        <Tooltip formatter={chartFormatter} contentStyle={{ background: "var(--panel-solid)", border: "1px solid var(--line)", borderRadius: 10, color: "var(--text)", fontSize: 12, boxShadow: "var(--shadow)" }} labelStyle={{ color: "var(--muted)", marginBottom: 6 }} />
         <Bar dataKey="rate" name="正确率" fill="#2563eb" radius={vertical ? [0, 8, 8, 0] : [8, 8, 0, 0]} isAnimationActive={false} />
       </BarChart>
     </ResponsiveContainer>

@@ -49,3 +49,5 @@ export const TimerReset = makeIcon(["M10 2h4", "M12 14v-4", "M4 5l2 2", "M20 5l-
 export const Trash2 = makeIcon(["M3 6h18", "M8 6V4h8v2", "M6 6l1 15h10l1-15", "M10 11v6", "M14 11v6"]);
 export const Upload = makeIcon(["M12 21V9", "M7 14l5-5 5 5", "M5 3h14"]);
 export const Wand2 = makeIcon(["M15 4l5 5", "M3 21l12-12", "M14 4l1-2", "M20 10l2-1", "M9 4l-1-2", "M4 9l-2-1", "M19 15l1 2", "M15 19l-1 2"]);
+
+export const ArrowRight = makeIcon(["M4 12h16", "M14 6l6 6-6 6"]);

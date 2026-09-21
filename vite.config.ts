@@ -9,11 +9,7 @@ export default defineConfig({
       transformIndexHtml(html) {
         return html
           .replace(/<script type="module" crossorigin src=/g, `<script type="module" crossorigin fetchpriority="high" src=`)
-          .replace(/<link rel="modulepreload" crossorigin href=/g, `<link rel="modulepreload" crossorigin fetchpriority="high" href=`)
-          .replace(
-            /<link rel="stylesheet" crossorigin href="([^"]+)">/g,
-            `<link rel="preload" crossorigin href="$1" as="style" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" crossorigin href="$1"></noscript>`
-          );
+          .replace(/<link rel="modulepreload" crossorigin href=/g, `<link rel="modulepreload" crossorigin fetchpriority="high" href=`);
       }
     }
   ],

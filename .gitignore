@@ -1,0 +1,28 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local backups and hosting metadata
+.local-backups/
+docs/reference/xingce-data-preview.png
+.vercel/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+
+# Tool logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

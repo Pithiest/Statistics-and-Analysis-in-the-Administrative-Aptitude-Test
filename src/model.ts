@@ -323,18 +323,17 @@ export function loadState() {
   return { records, settings, spaceCode: cloud };
 }
 
-export function saveRecords(records: TrainingRecord[]) {
-  writeJson(KEYS.records, normalizeRecords(records));
+export function saveRecords(records: TrainingRecord[]): boolean {
+  return writeJson(KEYS.records, normalizeRecords(records));
 }
 
-export function saveSettings(settings: Settings) {
-  writeJson(KEYS.settings, normalizeSettings(settings));
+export function saveSettings(settings: Settings): boolean {
+  return writeJson(KEYS.settings, normalizeSettings(settings));
 }
 
-export function saveSpaceCode(spaceCode: string) {
+export function saveSpaceCode(spaceCode: string): boolean {
   const code = normalizeCode(spaceCode);
-  if (code) writeJson(KEYS.cloud, { spaceCode: code });
-  else removeStorage(KEYS.cloud);
+  return code ? writeJson(KEYS.cloud, { spaceCode: code }) : removeStorage(KEYS.cloud);
 }
 
 export function normalizeRecords(input: unknown): TrainingRecord[] {

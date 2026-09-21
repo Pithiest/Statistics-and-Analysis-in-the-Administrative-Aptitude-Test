@@ -1,6 +1,11 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
+if (!process.argv.includes("--restore")) {
+  console.log("Git source is authoritative. To explicitly recover the legacy cloud snapshot, use npm run source:restore.");
+  process.exit(0);
+}
+
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "https://atwsraivphybkfmyeubd.supabase.co";
 const SUPABASE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "sb_publishable_y6wlba5S8qYJebIgnc389Q_zW6pMJnv";
 const SOURCE_KEY = "pithiest-xingce-source-v5";
