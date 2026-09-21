@@ -4,6 +4,11 @@ import type { FenbiBrowserExtras } from "./fenbiDevice";
 const CLOUD_URL = "https://atwsraivphybkfmyeubd.supabase.co/functions/v1/fenbi-cloud";
 export const FENBI_SESSION_KEY = "pithiest-xingce-fenbi-session-v1";
 export type FenbiAccount = {
+  historyUpdatedAt?: string | null;
+  historyComplete?: boolean;
+  historyCount?: number;
+  historyExcluded?: number;
+  syncStage?: string;
   accountId: string;
   displayName: string;
   lastSync: string | null;
@@ -46,6 +51,7 @@ export function storeFenbiSession(session: FenbiSession | null): boolean {
   try {
     if (session) localStorage.setItem(FENBI_SESSION_KEY, JSON.stringify(session));
     else localStorage.removeItem(FENBI_SESSION_KEY);
+    window.dispatchEvent(new Event("fenbi-session-change"));
     return true;
   } catch { return false; }
 }
@@ -111,3 +117,7 @@ export async function verifyFenbiDevice(token: string, startupId: string, extras
   const result = await request<FenbiAccount | { account: FenbiAccount }>("/verify-device", { token, body: { startupId, extras }, signal });
   return "account" in result ? result.account : result;
 }
+
+export const getFenbiPractices = (token: string, offset = 0, signal?: AbortSignal) => request<{items: import("./fenbiPractice").FenbiPractice[]; next:number|null; account:FenbiAccount}>(`/practice?offset=${offset}`, {token,signal});
+export const getPracticeQuestion = (token:string,exercise:string,question:string,signal?:AbortSignal) => request<{question:MistakeQuestion;answer:import("./fenbiPractice").PracticeAnswer}>(`/practice/question?exercise=${encodeURIComponent(exercise)}&question=${encodeURIComponent(question)}`,{token,signal});
+export const reviewFenbiPractice = (token:string,key:string,signal?:AbortSignal) => request<{reviewedAt:string}>("/practice/review",{token,body:{key},signal});

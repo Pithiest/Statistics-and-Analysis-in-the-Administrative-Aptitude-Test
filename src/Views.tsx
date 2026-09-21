@@ -450,10 +450,10 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
                   <td>{item.date}</td>
                   <td><strong>{item.module}</strong><small>{item.subType}</small></td>
                   <td><strong>{percent(item.correct, item.total)}%</strong><small>{item.correct}/{item.total}</small></td>
-                  <td><strong>{item.duration} 分</strong><small>{paceText(item)} · {paceState(item)}</small></td>
+                  <td><strong>{item.duration ? `${Math.round(item.duration*10)/10} 分` : "用时未提供"}</strong><small>{paceText(item)} · {paceState(item)}</small></td>
                   <td>{item.errorReason}</td>
                   <td><small>{[item.tags.join(" "), item.note].filter(Boolean).join(" · ") || "--"}</small></td>
-                  <td><button className="icon-btn" onClick={() => onEdit(item)} aria-label={`编辑 ${item.date} ${item.subType} 记录`} title="编辑记录"><Edit3 /></button><button className="icon-btn danger" onClick={() => onDelete(item)} aria-label={`删除 ${item.date} ${item.subType} 记录`} title="删除记录"><Trash2 /></button></td>
+                  <td><button className="icon-btn" onClick={() => onEdit(item)} aria-label={`${item.source==="fenbi"?"查看练习":"编辑"} ${item.date} ${item.subType} 记录`} title={item.source==="fenbi"?"查看练习":"编辑记录"}><Edit3 /></button>{item.source!=="fenbi" && <button className="icon-btn danger" onClick={() => onDelete(item)} aria-label={`删除 ${item.date} ${item.subType} 记录`} title="删除记录"><Trash2 /></button>}</td>
                 </tr>
               ))}
             </tbody>
@@ -477,8 +477,8 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
               <p>{item.errorReason} · {paceState(item)}{item.reviewStatus === "pending" ? " · 待复盘" : ""}</p>
               {(item.tags.length > 0 || item.note) && <small className="ledger-card-meta">{[item.tags.join(" / "), item.note].filter(Boolean).join(" · ")}</small>}
               <div className="card-actions">
-                <button className="soft-btn" onClick={() => onEdit(item)}><Edit3 /> 编辑</button>
-                <button className="soft-btn danger-text" onClick={() => onDelete(item)}><Trash2 /> 删除</button>
+                <button className="soft-btn" onClick={() => onEdit(item)}><Edit3 /> {item.source==="fenbi"?"查看练习":"编辑"}</button>
+                {item.source!=="fenbi" && <button className="soft-btn danger-text" onClick={() => onDelete(item)}><Trash2 /> 删除</button>}
               </div>
             </article>
           ))}
@@ -539,9 +539,10 @@ export function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, s
         </Panel>
       </section>
 
+      <div id="fenbi-settings-slot" />
       <section className="grid-two">
         <Panel title="数据备份" note="为训练记录留一份可带走的副本。">
-          <p className="settings-description">JSON 包含训练记录与设置，可重新导入；CSV 适合在表格软件中查看训练明细。</p>
+          <p className="settings-description">JSON 备份手动训练与设置；CSV 导出当前选中的统计来源。粉笔完整练习可在「复盘 → 全部练习」单独导出。</p>
           <div className="button-row">
             <button className="soft-btn" onClick={onExportJson}><Download /> 导出 JSON</button>
             <button className="soft-btn" onClick={onExportCsv}><Download /> 导出 CSV</button>
@@ -667,8 +668,8 @@ function RecordCard({ record, onEdit, onDelete, action }: { record: TrainingReco
       </div>
       <b>{percent(record.correct, record.total)}%</b>
       <div className="card-actions">
-        <button className="icon-btn" onClick={() => onEdit(record)} aria-label={`编辑 ${record.date} ${record.subType} 记录`} title="编辑记录"><Edit3 /></button>
-        {onDelete && <button className="icon-btn danger" onClick={() => onDelete(record)} aria-label={`删除 ${record.date} ${record.subType} 记录`} title="删除记录"><Trash2 /></button>}
+        <button className="icon-btn" onClick={() => onEdit(record)} aria-label={`${record.source==="fenbi"?"查看练习":"编辑"} ${record.date} ${record.subType} 记录`} title={record.source==="fenbi"?"查看练习":"编辑记录"}><Edit3 /></button>
+        {onDelete && record.source!=="fenbi" && <button className="icon-btn danger" onClick={() => onDelete(record)} aria-label={`删除 ${record.date} ${record.subType} 记录`} title="删除记录"><Trash2 /></button>}
         {action}
       </div>
     </article>

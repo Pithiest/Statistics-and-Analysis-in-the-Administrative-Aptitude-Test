@@ -1,3 +1,6 @@
+import "./practice.css";
+import {useFenbiPractice} from "./useFenbiPractice";
+import {practiceRecords} from "./fenbiPractice";
 import {
   ArrowRight,
   CalendarDays,
@@ -60,6 +63,7 @@ const DiagnosisRoute = lazy(() => import("./Views").then((module) => ({ default:
 const ReviewRoute = lazy(() => import("./Views").then((module) => ({ default: module.Review })));
 const MistakesWorkspace = lazy(() => import("./MistakesWorkspace").then((module) => ({ default: module.MistakesWorkspace })));
 const LedgerRoute = lazy(() => import("./Views").then((module) => ({ default: module.Ledger })));
+const PracticeRoute = lazy(() => import("./PracticeView").then(module => ({default:module.PracticeView})));
 const SettingsRoute = lazy(() => import("./Views").then((module) => ({ default: module.SettingsView })));
 type CoverageData = ReturnType<typeof dashboard>["coverage"];
 
@@ -67,7 +71,10 @@ export function App() {
   const [hydrated, setHydrated] = useState(false);
   const [openingView, setOpeningView] = useState<ViewId | null>(null);
   const [view, setView] = useState<ViewId>("today");
-  const [reviewTab, setReviewTab] = useState<"questions" | "training">("questions");
+  const [reviewTab, setReviewTab] = useState<"questions" | "training" | "practice">("practice");
+  const fenbi=useFenbiPractice();
+  const [statsSource,setStatsSource]=useState<"fenbi"|"manual"|null>(null);
+  const [practiceKey,setPracticeKey]=useState<string|null>(null);
   const [records, setRecords] = useState<TrainingRecord[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [spaceCode, setSpaceCode] = useState("");
@@ -128,7 +135,10 @@ export function App() {
     };
   }, []);
 
-  const data = useMemo(() => dashboard(records, settings), [records, settings]);
+  const source=fenbi.session?(statsSource||"fenbi"):"manual";
+  const importedRecords=useMemo(()=>practiceRecords(fenbi.items),[fenbi.items]);
+  const visibleRecords=source==="fenbi"?importedRecords:records;
+  const data = useMemo(() => dashboard(visibleRecords, settings), [visibleRecords, settings]);
   const currentRecord = editingId ? records.find((item) => item.id === editingId) : undefined;
 
   useEffect(() => {
@@ -345,11 +355,13 @@ export function App() {
       }
       return { ...DEFAULT_FORM, date: today() };
     });
+    setStatsSource("manual");
     scheduleSync();
     notify("训练已记录，可继续录入或到台账查看。");
   }
 
   function edit(record: TrainingRecord) {
+    if(record.source==="fenbi"){setPracticeKey(record.sourceKey||null);setReviewTab("practice");navigate("review");return;}
     setEditingId(record.id);
     setForm({
       date: record.date,
@@ -367,6 +379,7 @@ export function App() {
   }
 
   function softDelete(record: TrainingRecord) {
+    if(record.source==="fenbi")return;
     const now = new Date().toISOString();
     setRecords((list) => list.map((item) => (item.id === record.id ? { ...item, deletedAt: now, updatedAt: now } : item)));
     scheduleSync();
@@ -385,6 +398,7 @@ export function App() {
   }
 
   function markReviewed(record: TrainingRecord) {
+    if(record.source==="fenbi"){void fenbi.markReviewed(record.sourceKey!);return;}
     setRecords((list) => list.map((item) => (item.id === record.id ? markReviewedRecord(item) : item)));
     scheduleSync();
   }
@@ -525,6 +539,8 @@ export function App() {
           </div>
         </header>
 
+        {fenbi.session && ["today","diagnosis","ledger","review"].includes(view) && <div className="practice-source-bar"><div><strong>{source==="fenbi"?"粉笔自动记录":"手动训练记录"}</strong><span>{source==="fenbi"?`${fenbi.items.length} 次已完成练习 · ${fenbi.account?.historyComplete?"历史已补齐":"历史正在补齐"}`:"使用当前设备与空间码中的记录"}</span></div><select aria-label="统计数据来源" value={source} onChange={event=>setStatsSource(event.target.value as "fenbi"|"manual")}><option value="fenbi">粉笔自动记录</option><option value="manual">手动训练记录</option></select></div>}
+        {fenbi.error && <div className="notice-banner is-warning" role="status">{fenbi.error}</div>}
         <section key={view} className="page" aria-label={title(view)} aria-busy={!hydrated || openingView !== null}>
           {!hydrated ? <div className="panel route-loading" role="status"><RefreshCw className="spin" />正在恢复本机记录</div> : (
           <Suspense fallback={<div className="panel route-loading"><RefreshCw className="spin" /> 正在打开页面</div>}>
@@ -563,7 +579,7 @@ export function App() {
             )}
             {view === "diagnosis" && (
               <DiagnosisRoute
-                records={records}
+                records={visibleRecords}
                 settings={settings}
                 module={diagnosisModule}
                 subType={diagnosisSub}
@@ -579,10 +595,11 @@ export function App() {
             )}
             {view === "review" && <div className="stack">
               <div className="review-tabs" role="tablist" aria-label="复盘类型">
+                <button role="tab" aria-selected={reviewTab === "practice"} className={reviewTab === "practice"?"active":""} onClick={()=>setReviewTab("practice")}>全部练习{fenbi.items.length?` · ${fenbi.items.length}`:""}</button>
                 <button role="tab" aria-selected={reviewTab === "questions"} className={reviewTab === "questions" ? "active" : ""} onClick={() => setReviewTab("questions")}>粉笔错题本</button>
                 <button role="tab" aria-selected={reviewTab === "training"} className={reviewTab === "training" ? "active" : ""} onClick={() => setReviewTab("training")}>训练复盘{data.pending.length ? ` · ${data.pending.length}` : ""}</button>
               </div>
-              {reviewTab === "questions" ? <MistakesWorkspace /> : <ReviewRoute records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
+              {reviewTab === "questions" ? <div id="fenbi-review-slot" /> : reviewTab==="practice" ? <PracticeRoute items={fenbi.items} session={fenbi.session} account={fenbi.account} selectedKey={practiceKey} onSelect={setPracticeKey} onSettings={()=>navigate("settings")} onReview={fenbi.markReviewed} /> : <ReviewRoute records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
             </div>}
             {view === "ledger" && (
               <LedgerRoute
@@ -637,6 +654,7 @@ export function App() {
           </Suspense>
           )}
         </section>
+        {hydrated && <Suspense fallback={null}><MistakesWorkspace mode={view==="settings"?"settings":view==="review"&&reviewTab==="questions"?"review":"background"} onSettings={()=>navigate("settings")} /></Suspense>}
       </main>
 
       <nav className="mobile-nav" aria-label="主导航">

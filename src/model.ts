@@ -11,6 +11,10 @@ export type SyncState = "local" | "pending" | "syncing" | "synced" | "offline" |
 export type Theme = "light" | "dark";
 
 export type TrainingRecord = {
+  source?: "fenbi";
+  sourceKey?: string;
+  pacedTotal?: number;
+  paceSecondsTotal?: number;
   id: string;
   date: string;
   module: ModuleName;
@@ -289,12 +293,12 @@ export function percent(correct: number, total: number) {
   return total > 0 ? Math.round((correct / total) * 100) : 0;
 }
 
-export function paceSeconds(record: Pick<TrainingRecord, "total" | "duration">) {
-  if (!record.total || !record.duration) return 0;
-  return Math.round((record.duration * 60) / record.total);
+export function paceSeconds(record: Pick<TrainingRecord, "total" | "duration" | "pacedTotal" | "paceSecondsTotal">) {
+  const total=record.pacedTotal??record.total,seconds=record.paceSecondsTotal??record.duration*60;
+  return total>0&&seconds>0?Math.round(seconds/total):0;
 }
 
-export function paceText(record: Pick<TrainingRecord, "total" | "duration">) {
+export function paceText(record: Pick<TrainingRecord, "total" | "duration" | "pacedTotal" | "paceSecondsTotal">) {
   const seconds = paceSeconds(record);
   return seconds ? `${seconds}s/题` : "--";
 }
@@ -309,10 +313,10 @@ export function paceState(record: TrainingRecord) {
 }
 
 export function avgPace(records: TrainingRecord[]) {
-  const paced = records.filter((item) => item.total > 0 && item.duration > 0);
-  const total = sum(paced, "total");
-  const duration = sum(paced, "duration");
-  return total ? Math.round((duration * 60) / total) : 0;
+  const paced = records.filter((item) => (item.pacedTotal??item.total)>0 && (item.paceSecondsTotal??item.duration*60)>0);
+  const total=paced.reduce((s,r)=>s+(r.pacedTotal??r.total),0);
+  const seconds=paced.reduce((s,r)=>s+(r.paceSecondsTotal??r.duration*60),0);
+  return total ? Math.round(seconds/total) : 0;
 }
 
 export function loadState() {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import {
-  getIdentity, pollQr, ProviderError, readAnswers, readQuestionBatch, readTree, registerDevice, startQr
+  getIdentity, pollQr, ProviderError, readAnswers, readQuestionBatch, readExerciseSolutions, readTree, registerDevice, startQr
 } from "../supabase/functions/fenbi-cloud/provider.ts";
 import type { CookieJar, DeviceRegistration } from "../supabase/functions/fenbi-cloud/provider.ts";
 
@@ -275,4 +275,17 @@ test("device registration preserves verification errors and does not retry them"
   const fetch = mockFetch(t, () => json({ private: "synthetic-only" }, 453));
   await assert.rejects(registerDevice([], syntheticDevice()), error => error instanceof ProviderError && error.code === "VERIFICATION_REQUIRED" && error.httpStatus === 453 && !error.message.includes("synthetic-only"));
   assert.equal(fetch.mock.callCount(), 1);
+});
+
+test("completed exercise details follow returned official URLs and attach the correct reading materials",async t=>{
+ mockFetch(t,(url)=>{
+  if(url.pathname.endsWith("getSolution")){assert.equal(url.searchParams.get("key"),"synthetic-exercise");return json({code:1,data:{staticUrl:{type:1,urls:["https://tiku.fenbi.com/combine/static/solution?key=synthetic-authorized-content"]}}});}
+  assert.equal(url.pathname,"/combine/static/solution");assert.equal(url.searchParams.get("routecs"),"xingce");assert.equal(url.searchParams.get("type"),"1");assert.equal(url.searchParams.get("deviceId"),"real-synthetic-test-device");
+  return json({solutions:[{id:1,globalId:"q1",tikuPrefix:"xingce",content:"合成题"}],materials:[{id:8,globalId:"m1",content:"合成材料"}],card:{nodeType:0,children:[{nodeType:1,name:"资料分析",children:[{nodeType:2,key:"q1",materialKeys:["m1"]}]}]}});
+ });
+ const result=await readExerciseSolutions([],"synthetic-exercise","real-synthetic-test-device");assert.deepEqual(result.solutions[0].materialIndexes,[0]);assert.deepEqual(result.tree,[{name:"资料分析",questionIds:["1"]}]);
+});
+test("exercise content cannot forward credentials to a supplied foreign URL or mismatched API",async t=>{
+ let count=0;mockFetch(t,()=>{count++;return json({code:1,data:{staticUrl:{type:1,urls:["https://untrusted.invalid/data","https://login.fenbi.com/api/users/info"]}}});});
+ await assert.rejects(readExerciseSolutions([],"synthetic-exercise"),error=>error instanceof ProviderError&&error.code==="INVALID_RESPONSE");assert.equal(count,1);
 });

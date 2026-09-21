@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
+import {createPortal} from "react-dom";
 import { Cloud, CloudOff, RefreshCw } from "./icons";
 import { MistakesView } from "./MistakesView";
 import { emptyMistakeNotebook, exportMistakeNotebook, mergeMistakeNotebooks, normalizeMistakeNotebook, parseMistakeImport } from "./mistakes";
@@ -84,7 +85,15 @@ function useLocalNotebook(key: string) {
   return { notebook, notebookRef, ready, storageError, commit, saveQueue, retryRead: () => setReadAttempt((value) => value + 1) };
 }
 
-export function MistakesWorkspace() {
+type Presentation = { mode: "settings" | "review" | "background"; onSettings: () => void };
+
+export function MistakesWorkspace({mode,onSettings}: Presentation) {
+  const [target,setTarget]=useState<HTMLElement|null>(null);
+  useEffect(()=>{
+    const id=mode==="settings"?"fenbi-settings-slot":mode==="review"?"fenbi-review-slot":"";
+    const update=()=>setTarget(id?document.getElementById(id):null);update();
+    const observer=new MutationObserver(update);observer.observe(document.body,{childList:true,subtree:true});return()=>observer.disconnect();
+  },[mode]);
   const [session, setSession] = useState<FenbiSession | null>(readFenbiSession);
   const sessionRef = useRef(session);
   const sessionRevision = useRef(0);
@@ -118,15 +127,18 @@ export function MistakesWorkspace() {
       ++sessionRevision.current; sessionRef.current = next; setSession(next);
       setMessage(next ? "" : "账号已在另一页面退出，原账号复盘记录仍保留在本机。");
     };
+    const samePage=()=>{const next=readFenbiSession();if(next?.token!==sessionRef.current?.token){++sessionRevision.current;sessionRef.current=next;setSession(next);}};
+    window.addEventListener("fenbi-session-change",samePage);
     window.addEventListener("storage", changedElsewhere);
-    return () => window.removeEventListener("storage", changedElsewhere);
+    return () => {window.removeEventListener("storage", changedElsewhere);window.removeEventListener("fenbi-session-change",samePage);};
   }, []);
-  return <div className="stack mistake-workspace">
-    {sessionStorageError && <div className="mistake-storage-warning" role="alert">{sessionStorageError}</div>}
-    {session ? <AccountNotebook key={`${session.accountId}:${session.token}`} session={session}
+  const portal=(content:React.ReactNode)=>target?createPortal(content,target):null;
+  return <>
+    {target && sessionStorageError && <div className="mistake-storage-warning" role="alert">{sessionStorageError}</div>}
+    {session ? <AccountNotebook key={`${session.accountId}:${session.token}`} session={session} mode={mode} onSettings={onSettings} portal={portal}
       onExpired={() => clearSession(session, true)} onLogout={() => logout(session)} onReconnect={() => clearSession(session, true)} />
-      : <AnonymousNotebook key="anonymous" message={message} onLogin={finishLogin} />}
-  </div>;
+      : <AnonymousNotebook key="anonymous" message={message} onLogin={finishLogin} mode={mode} onSettings={onSettings} portal={portal} />}
+  </>;
 }
 
 function StorageWarning({ message, notebook, onRetry }: { message: string; notebook: MistakeNotebook; onRetry?: () => void }) {
@@ -134,7 +146,7 @@ function StorageWarning({ message, notebook, onRetry }: { message: string; noteb
   return <div className="mistake-storage-warning" role="alert"><span>{message}</span>{onRetry ? <button className="soft-btn" type="button" onClick={onRetry}>重试读取</button> : <button className="soft-btn" type="button" onClick={() => downloadNotebook(notebook)}>导出当前备份</button>}</div>;
 }
 
-function AnonymousNotebook({ message, onLogin }: { message: string; onLogin: (session: FenbiSession) => void }) {
+function AnonymousNotebook({ message, onLogin, mode,onSettings,portal }: { message: string; onLogin: (session: FenbiSession) => void; portal:(node:React.ReactNode)=>React.ReactNode } & Presentation) {
   const local = useLocalNotebook(ANONYMOUS_KEY);
   const [importNotice, setImportNotice] = useState("");
   const [importError, setImportError] = useState("");
@@ -149,13 +161,15 @@ function AnonymousNotebook({ message, onLogin }: { message: string; onLogin: (se
     } catch { if (alive.current) setImportError("文件未能导入，请选择插件导出或本网站备份的错题 JSON，且不超过 40 MB。"); }
   };
   const connection = <div className="stack">
-    <LoginPanel onLogin={onLogin} message={message} />
+    {mode==="settings" ? <LoginPanel onLogin={onLogin} message={message} /> : <div className="notice-banner"><span>在设置连接粉笔账号，自动同步全部练习与错题。</span><button className="soft-btn" onClick={onSettings}>前往设置</button></div>}
     {importNotice && <div className="mistake-cloud-notice" role="status">{importNotice}</div>}
     {importError && <div className="mistake-storage-warning" role="alert">{importError}</div>}
     <StorageWarning message={local.storageError} notebook={local.notebook} onRetry={!local.ready ? local.retryRead : undefined} />
   </div>;
-  if (!local.ready) return <div className="stack">{connection}<div className="panel mistake-cloud-loading" role="status">{local.storageError ? "读取恢复后即可继续使用，原本机记录保持不变。" : "正在读取本机错题…"}</div></div>;
-  return <MistakesView notebook={local.notebook} onChange={local.commit} onImport={importFile} onExport={() => downloadNotebook(local.notebookRef.current)} connectionSlot={connection} />;
+  if(mode==="background")return null;
+  if(mode==="settings")return portal(connection);
+  if (!local.ready) return portal(<div className="stack">{connection}<div className="panel mistake-cloud-loading" role="status">{local.storageError ? "读取恢复后即可继续使用，原本机记录保持不变。" : "正在读取本机错题…"}</div></div>);
+  return portal(<MistakesView notebook={local.notebook} onChange={local.commit} onImport={importFile} onExport={() => downloadNotebook(local.notebookRef.current)} connectionSlot={connection} />);
 }
 
 function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => void; message: string }) {
@@ -233,7 +247,7 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
     return () => { stopped = true; clearTimeout(pollTimer); clearInterval(clock); };
   }, [challenge]);
   return <section className="panel mistake-login-panel">
-    <div className="mistake-login-copy"><span className="mistake-eyebrow">自己的账号 · 独立错题本</span><h3>连接粉笔，继续复盘</h3><p>每位同学使用自己的粉笔账号。错题由云端读取，你在这里的笔记和复习安排独立保存，不会更改粉笔里的作答。</p>
+    <div className="mistake-login-copy"><span className="mistake-eyebrow">粉笔账号 · 自动同步</span><h3>连接粉笔，接续全部练习</h3><p>每位同学使用自己的粉笔账号。完成的练习、正确题、错题与实际用时由云端读取，你在这里的笔记和复习安排独立保存，不会更改粉笔里的作答。</p>
       {message && <p className="mistake-login-message" role="status">{message}</p>}
       <ul><li>用粉笔 App 扫码，在手机确认登录。</li><li>正在同一部手机上使用？可在电脑或另一块屏幕上打开本页扫码。</li><li>未登录时导入的本机错题，不会自动并入账号。</li></ul>
       <a href="https://www.fenbi.com/" target="_blank" rel="noopener noreferrer">打开粉笔官网 <span aria-hidden="true">↗</span></a>
@@ -255,7 +269,7 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
   </section>;
 }
 
-function AccountNotebook({ session, onExpired, onLogout, onReconnect }: { session: FenbiSession; onExpired: () => void; onLogout: () => void; onReconnect: () => void }) {
+function AccountNotebook({ session, onExpired, onLogout, onReconnect,mode,onSettings,portal }: { session: FenbiSession; onExpired: () => void; onLogout: () => void; onReconnect: () => void; portal:(node:React.ReactNode)=>React.ReactNode } & Presentation) {
   const local = useLocalNotebook(session.accountId);
   const [account, setAccount] = useState<FenbiAccount | null>(null);
   const accountRef = useRef<FenbiAccount | null>(null);
@@ -406,7 +420,7 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect }: { sessio
       await syncFenbiNow(session.token, lifetime.current.signal);
       if (!valid()) return;
       if (accountRef.current) applyAccount({ ...accountRef.current, syncState: "queued" });
-      setNotice("已安排更新粉笔错题，完成后会自动显示。已有复盘可以继续使用。");
+      setNotice("已安排更新粉笔练习与错题，完成后会自动显示。已有复盘可以继续使用。");
       await pollAccount();
     } catch (failure) { handleError(failure); }
     finally { if (valid()) setActionBusy(false); }
@@ -446,28 +460,30 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect }: { sessio
   const needsLogin = !needsDeviceVerification && (account?.syncState === "reauth" || account?.syncState === "paused");
   const statusText = !online ? "当前离线，可继续复盘"
     : needsDeviceVerification ? "粉笔要求完成设备验证"
-    : account?.syncState === "syncing" ? `正在更新错题${account.total ? ` · ${account.loaded} / ${account.total}` : ""}`
+    : account?.syncState === "syncing" ? `正在更新${account.syncStage==="history"?`练习 · 已读取 ${account.historyCount||0} 次`:"错题"}${account.total ? ` · ${account.loaded} / ${account.total}` : ""}`
     : account?.syncState === "queued" ? "已安排同步，正在等待更新"
     : account?.syncState === "reauth" ? "粉笔登录需要重新确认"
     : account?.syncState === "paused" ? "已停止自动更新错题"
     : account?.syncState === "error" ? "上次更新未完成，可重试"
-    : account?.lastSync ? `错题更新于 ${localTime(account.lastSync)}` : loading ? "正在读取云端错题…" : "正在准备你的错题本";
+    : account?.historyUpdatedAt ? `练习更新于 ${localTime(account.historyUpdatedAt)}` : account?.lastSync ? `错题更新于 ${localTime(account.lastSync)}` : loading ? "正在读取云端错题…" : "正在准备你的错题本";
   const connection = <div className="stack">
-    <section className="panel mistake-account-panel">
-      <div className="mistake-account-identity">{online ? <Cloud /> : <CloudOff />}<div><strong>{account?.displayName || "我的粉笔账号"}</strong><span role="status">{statusText}</span>{account?.nextSync && account.syncState === "idle" && <small>下次自动更新 {localTime(account.nextSync)}</small>}</div></div>
+    {mode==="settings" ? <section className="panel mistake-account-panel">
+      <div className="mistake-account-identity">{online ? <Cloud /> : <CloudOff />}<div><small>粉笔账号 · 自动同步</small><strong>{account?.displayName || "我的粉笔账号"}</strong><span role="status">{statusText}</span>{account?.nextSync && account.syncState === "idle" && <small>下次自动更新 {localTime(account.nextSync)}</small>}</div></div>
       <div className="mistake-account-actions">
-        {needsDeviceVerification ? <button type="button" className="soft-btn" disabled={!online || actionBusy || deviceAttempted} onClick={verifyDevice}>{actionBusy ? "正在登记设备…" : deviceAttempted ? "请完成官方验证" : "完成设备验证"}</button> : needsLogin ? <button type="button" className="soft-btn" onClick={() => callbacks.current.onReconnect()}>重新扫码连接</button> : <button type="button" className="soft-btn" disabled={!local.ready || !online || syncing || actionBusy} onClick={syncNow}><RefreshCw className={syncing ? "mistake-sync-spinning" : ""} />{syncing ? "正在同步" : "立即同步错题"}</button>}
+        {needsDeviceVerification ? <button type="button" className="soft-btn" disabled={!online || actionBusy || deviceAttempted} onClick={verifyDevice}>{actionBusy ? "正在登记设备…" : deviceAttempted ? "请完成官方验证" : "完成设备验证"}</button> : needsLogin ? <button type="button" className="soft-btn" onClick={() => callbacks.current.onReconnect()}>重新扫码连接</button> : <button type="button" className="soft-btn" disabled={!local.ready || !online || syncing || actionBusy} onClick={syncNow}><RefreshCw className={syncing ? "mistake-sync-spinning" : ""} />{syncing ? "正在同步" : "立即检查更新"}</button>}
         <details className="mistake-account-more"><summary>更多</summary><div><button type="button" disabled={actionBusy || !online || account?.syncState === "paused"} onClick={disconnect}>停止自动同步</button><button type="button" onClick={() => callbacks.current.onLogout()}>退出此账号</button></div></details>
       </div>
-      <div className="mistake-progress-status" role="status">{sending ? "正在保存复盘进度到云端…" : pendingCount ? `${pendingCount} 道题的复盘进度待同步${!online ? "，联网后继续" : ""}` : "复盘先保存在本机，再同步到当前账号"}</div>
-    </section>
-    {needsDeviceVerification && <div className="mistake-cloud-notice" role="status"><span>{account?.error}<br />使用当前浏览器完成粉笔要求的设备登记，不读取密码。{deviceMessage || (deviceAttempted ? "本次会话已尝试登记，请到粉笔官方页面或 App 完成验证。" : "仅在你点击后登记一次；未完成时停止尝试。")}</span><a href="https://www.fenbi.com/" target="_blank" rel="noopener noreferrer">打开粉笔官网</a></div>}
+      <div className="mistake-progress-status">已保存 {account?.historyCount||0} 次练习 · {account?.questionCount||0} 道错题。打开网站自动检查更新，云端每 6 小时继续同步。{account?.historyExcluded ? `另有 ${account.historyExcluded} 次练习报告不完整，暂未计入统计。` : ""}</div><div className="mistake-progress-status" role="status">{sending ? "正在保存复盘进度到云端…" : pendingCount ? `${pendingCount} 道题的复盘进度待同步${!online ? "，联网后继续" : ""}` : "复盘先保存在本机，再同步到当前账号"}</div>
+    </section> : <div className="notice-banner"><span>{account?.displayName||"我的粉笔账号"} · {statusText}</span><button className="soft-btn" onClick={onSettings}>管理账号</button></div>}
+    {mode==="settings" && needsDeviceVerification && <div className="mistake-cloud-notice" role="status"><span>{account?.error}<br />使用当前浏览器完成粉笔要求的设备登记，不读取密码。{deviceMessage || (deviceAttempted ? "本次会话已尝试登记，请到粉笔官方页面或 App 完成验证。" : "仅在你点击后登记一次；未完成时停止尝试。")}</span><a href="https://www.fenbi.com/" target="_blank" rel="noopener noreferrer">打开粉笔官网</a></div>}
     {!online && <div className="mistake-cloud-notice">当前处于离线状态，已保存在本机的题目和笔记可以继续使用。</div>}
     {cloudError && <div className="mistake-storage-warning" role="alert"><span>{cloudError}</span><button type="button" className="soft-btn" disabled={!online || loading} onClick={() => void pull(true)}>重新连接</button></div>}
     <StorageWarning message={local.storageError} notebook={local.notebook} onRetry={!local.ready ? local.retryRead : undefined} />
     {notice && <div className="mistake-cloud-notice" role="status">{notice}<button type="button" className="mistake-text-button" onClick={() => setNotice("")}>收起</button></div>}
     {pendingImport && <section className="panel mistake-import-confirm" aria-label="确认导入到当前账号"><h3>导入到「{account?.displayName || "当前账号"}」的本机错题本？</h3><p>这份文件会新增 {pendingImport.summary.added} 题、更新 {pendingImport.summary.updated} 题。请确认它属于你有权使用的题目。文件中的题目内容只保存在本机，云端已有题目的复盘进度会合并同步。</p><div className="button-row"><button type="button" className="primary-btn" onClick={confirmImport}>确认导入到此账号</button><button type="button" className="soft-btn" onClick={() => setPendingImport(null)}>取消</button></div></section>}
   </div>;
-  if (!local.ready) return <div className="stack">{connection}<div className="panel mistake-cloud-loading" role="status">{local.storageError ? "读取恢复后即可继续同步，原本机记录保持不变。" : "正在读取此账号的本机错题…"}</div></div>;
-  return <MistakesView notebook={local.notebook} onChange={changeNotebook} onImport={importFile} onExport={() => downloadNotebook(local.notebookRef.current)} connectionSlot={connection} />;
+  if(mode==="background")return null;
+  if(mode==="settings")return portal(connection);
+  if (!local.ready) return portal(<div className="stack">{connection}<div className="panel mistake-cloud-loading" role="status">{local.storageError ? "读取恢复后即可继续同步，原本机记录保持不变。" : "正在读取此账号的本机错题…"}</div></div>);
+  return portal(<MistakesView notebook={local.notebook} onChange={changeNotebook} onImport={importFile} onExport={() => downloadNotebook(local.notebookRef.current)} connectionSlot={connection} />);
 }

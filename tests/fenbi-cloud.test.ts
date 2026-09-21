@@ -92,7 +92,7 @@ test("account polling uses the lightweight owner view without a full notebook or
   assert.deepEqual(await response.json(), {
     sourceStamp: "2026-09-01T10:00:00.000Z", progressRevision: 7, accountId: "account-a", displayName: "合成用户",
     lastSync: "2026-09-01T10:00:00.000Z", lastAttempt: null, nextSync: "2026-09-02T10:00:00.000Z", syncState: "idle", error: null,
-    questionCount: 619, loaded: 20, total: 619
+    questionCount: 619, loaded: 20, total: 619, historyUpdatedAt: null, historyComplete: false, historyCount: 0, historyExcluded: 0, syncStage: "mistakes"
   });
   assert.deepEqual(visited, [
     { path: "/rest/v1/xc_fb_sessions", method: "GET" },
@@ -295,4 +295,21 @@ test("concurrent QR polling consumes one challenge once and keeps provider crede
   assert.equal(qrPolls, 1);
   assert.equal(sessions.length, 1);
   assert.equal((await tampered.text()).includes(cookieValue), false);
+});
+
+test("practice pagination, questions, and review writes are scoped by authenticated account, never caller owner IDs", async t => {
+ useEnvironment(t);
+ t.mock.method(globalThis,"fetch",async (input,init)=>{
+  const url=new URL(String(input));
+  if(url.pathname.endsWith("xc_fb_sessions"))return json([{account_id:"account-a"}]);
+  if(url.pathname.endsWith("xc_fb_account_status"))return json([{id:"account-a"}]);
+  assert.equal(url.searchParams.get("account_id"),"eq.account-a");
+  assert.ok(url.pathname.endsWith("xc_fb_exercises"));
+  return json([]);
+ });
+ const {handler}=await cloud("practice-owner");
+ const list=await handler(request("/practice?accountId=account-b"));assert.equal(list.status,200);assert.deepEqual((await list.json()).items,[]);
+ assert.equal((await handler(request("/practice?offset=-1"))).status,400);
+ assert.equal((await handler(request("/practice/question?exercise=other&question=1&accountId=account-b"))).status,404);
+ assert.equal((await handler(request("/practice/review",{key:"other",accountId:"account-b"}))).status,404);
 });

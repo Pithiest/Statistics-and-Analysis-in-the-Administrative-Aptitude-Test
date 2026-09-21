@@ -25,6 +25,7 @@ export type FenbiQuestionBatch = {
   solutions: JsonObject[];
   materials: JsonObject[];
   q2subQuestionIds: unknown;
+  tree?: FenbiTreeNode[];
 };
 export type DeviceRegistration = {
   startupId: string;
@@ -276,4 +277,61 @@ export async function readAnswers(cookies: CookieJar, ids: Array<string | number
   const result = await request(tikuUrl("/api/xingce/user-answers", { ids: normalized.join(",") }, deviceId), cookies);
   if (!Array.isArray(result) || result.some(answer => !object(answer) || !normalized.includes(String(answer.questionId)) || !object(answer.answer))) throw invalidResponse();
   return result as JsonObject[];
+}
+
+/** The same read-only history and report endpoints used by the official web app. */
+export async function readHistoryPage(cookies: CookieJar, categoryId: number, cursor: string, deviceId?: string) {
+  if (![3,1].includes(categoryId) || typeof cursor!=="string" || cursor.length>10000) throw new ProviderError("INVALID_REQUEST","历史分页参数无效。");
+  const value=await request(tikuUrl("/combine/exercise/getExerciseBriefHistory",{categoryId:String(categoryId),cursor,limit:"15",routecs:"xingce"},deviceId),cookies);
+  if (!object(value)||value.code!==1||!object(value.data)||!Array.isArray(value.data.historyItems)||value.data.historyItems.some(x=>!object(x)||typeof x.exerciseKey!=="string"||x.exerciseKey.length>2048)
+    ||(value.data.cursor!==null && typeof value.data.cursor!=="string")) throw invalidResponse();
+  return value.data as {historyItems:JsonObject[];cursor:string|null};
+}
+export async function readExercise(cookies: CookieJar, exerciseKey: string, kind: "getSolution"|"getReport", deviceId?: string) {
+  if (!exerciseKey || exerciseKey.length>2048 || /[\u0000-\u001f]/.test(exerciseKey))throw new ProviderError("INVALID_REQUEST","练习标识无效。");
+  const value=await request(tikuUrl(`/combine/exercise/${kind}`,{key:exerciseKey,format:"html",routecs:"xingce"},deviceId),cookies);
+  if (!object(value)||value.code!==1||!object(value.data))throw invalidResponse();
+  return value.data;
+}
+
+/** Completed exercise solutions have their own authorized static URL; the errors endpoint excludes correct questions. */
+export async function readExerciseSolutions(cookies: CookieJar, exerciseKey: string, deviceId?: string): Promise<FenbiQuestionBatch> {
+  const exercise=await readExercise(cookies,exerciseKey,"getSolution",deviceId);
+  const staticInfo=exercise.staticUrl;
+  if(!object(staticInfo)||!Array.isArray(staticInfo.urls)||![1,2].includes(Number(staticInfo.type)))throw invalidResponse();
+  let result:unknown;
+  for(const candidate of staticInfo.urls.slice(0,2)){
+    if(typeof candidate!=="string")continue;
+    let url:URL;try{url=new URL(candidate.startsWith("//")?`https:${candidate}`:candidate);}catch{continue;}
+    if(url.protocol!=="https:"||url.username||url.password||(url.port&&url.port!=="443"))continue;
+    const cdn=url.hostname==="fbstatic.cn"||url.hostname.endsWith(".fbstatic.cn");
+    if(!cdn&&(url.hostname!=="tiku.fenbi.com"||url.pathname!=="/combine/static/solution"))continue;
+    if(!cdn){
+      const params=Object.fromEntries(url.searchParams);params.routecs="xingce";params.type=String(staticInfo.type);
+      url=tikuUrl(url.pathname,params,deviceId);
+    }
+    result=await request(url,cdn?[]:cookies,undefined,cdn);break;
+  }
+  if(!object(result)||!Array.isArray(result.solutions)||!Array.isArray(result.materials))throw invalidResponse();
+  const solutions=result.solutions.filter(q=>object(q)&&q.tikuPrefix==="xingce") as JsonObject[];
+  if(solutions.some(q=>!/^[0-9]{1,20}$/.test(String(q.id))))throw invalidResponse();
+  const materials=result.materials.filter(object).map(m=>({...m,id:m.globalId||m.id}));
+  const materialIndex=new Map(materials.map((m,i)=>[String(m.id),i]));
+  const byKey=new Map(solutions.map(q=>[String(q.globalId),q]));
+  const groups=new Map<string,string[]>();let visited=0;
+  const walk=(raw:unknown,module="未分类",inherited:string[]=[],depth=0)=>{
+    if(!object(raw)||depth>24||++visited>20000)throw invalidResponse();
+    if(raw.nodeType===1&&typeof raw.name==="string"&&raw.name.trim())module=raw.name.trim();
+    const keys=Array.isArray(raw.materialKeys)?raw.materialKeys.map(String):inherited;
+    const question=byKey.get(String(raw.key));
+    if(question){
+      if(keys.some(k=>!materialIndex.has(k)))throw invalidResponse();
+      question.materialIndexes=keys.map(k=>materialIndex.get(k)!);
+      groups.set(module,[...(groups.get(module)||[]),String(question.id)]);
+    }
+    for(const child of Array.isArray(raw.children)?raw.children:[])walk(child,module,keys,depth+1);
+  };
+  if(object(result.card))walk(result.card);
+  const tree=[...groups].map(([name,questionIds])=>({name,questionIds}));
+  return {requestedIds:solutions.map(q=>String(q.id)),solutions,materials,q2subQuestionIds:null,tree};
 }

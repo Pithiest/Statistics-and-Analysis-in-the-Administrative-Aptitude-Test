@@ -46,7 +46,7 @@ function plainText(html: string): string {
   return (fragment.textContent || "").replace(/\s+/g, " ").trim();
 }
 
-function QuestionHtml({ html, className = "" }: { html: string; className?: string }) {
+export function QuestionHtml({ html, className = "" }: { html: string; className?: string }) {
   const safeHtml = useMemo(() => sanitizeQuestionHtml(html), [html]);
   return <div className={`mistake-richtext ${className}`} dangerouslySetInnerHTML={{ __html: safeHtml }} />;
 }

@@ -1,4 +1,5 @@
-import { startQr, pollQr, getIdentity, readTree, readQuestionBatch, readAnswers, registerDevice, ProviderError } from "./provider.ts";
+import { normalizePractice } from "../../../src/fenbiPractice.ts";
+import { startQr, pollQr, getIdentity, readTree, readQuestionBatch, readAnswers, registerDevice, readHistoryPage, readExercise, readExerciseSolutions, ProviderError } from "./provider.ts";
 import type { CookieJar } from "./provider.ts";
 import { emptyMistakeNotebook, importFenbiExport, reuseUnchangedSource, mergeMistakeNotebooks, normalizeMistakeNotebook } from "../../../src/mistakes.ts";
 import type { MistakeNotebook } from "../../../src/mistakes.ts";
@@ -40,7 +41,7 @@ async function account(req:Request,light=false) {
   if(!rows?.length)throw new HttpError(401,"账号连接不存在，请重新扫码。");
   return {row:rows[0],tokenHash};
 }
-function status(row:any) {return {sourceStamp:row.source_stamp??row.notebook?.lastImportedAt??null,progressRevision:row.progress_revision,accountId:row.id,displayName:row.display_name,lastSync:row.last_sync,lastAttempt:row.last_attempt,nextSync:row.next_sync,syncState:row.sync_state,error:row.last_error,questionCount:row.question_count??row.notebook?.questions?.length??0,loaded:row.sync_loaded??row.sync_cursor?.batches?.reduce((n:number,b:any)=>n+(b.solutions?.length||0),0)??0,total:row.sync_total??row.sync_cursor?.requestedQuestionIds?.length??0};}
+function status(row:any) {return {historyUpdatedAt:row.history_updated_at??null,historyComplete:row.history_complete??false,historyCount:row.history_count??0,historyExcluded:row.history_excluded??0,syncStage:row.sync_stage??row.sync_cursor?.stage??"mistakes",sourceStamp:row.source_stamp??row.notebook?.lastImportedAt??null,progressRevision:row.progress_revision,accountId:row.id,displayName:row.display_name,lastSync:row.last_sync,lastAttempt:row.last_attempt,nextSync:row.next_sync,syncState:row.sync_state,error:row.last_error,questionCount:row.question_count??row.notebook?.questions?.length??0,loaded:row.sync_loaded??row.sync_cursor?.batches?.reduce((n:number,b:any)=>n+(b.solutions?.length||0),0)??0,total:row.sync_total??row.sync_cursor?.requestedQuestionIds?.length??0};}
 export function withProgress(notebook:unknown,progress:unknown):MistakeNotebook {
   const book=normalizeMistakeNotebook(notebook);
   const map=new Map((Array.isArray(progress)?progress:[]).filter(x=>x&&typeof x.id==="string").map(x=>[x.id,x.progress]));
@@ -79,7 +80,7 @@ async function loginPoll(body:any) {
   const consumed=await database(`xc_fb_logins?id=eq.${challenge.id}&last_poll_at=eq.${encodeURIComponent(pollRevision)}`,{method:"DELETE",headers:{Prefer:"return=representation"}});
   if(!consumed?.length)throw new HttpError(410,"二维码已使用，请重新生成。");
   const providerKey=await digest(`${await key()}:fenbi:${identity.providerId}`);
-  const accounts=await database(`${TABLE}?on_conflict=provider_key`,{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=representation"},body:JSON.stringify({provider_key:providerKey,display_name:identity.displayName,session_cipher:await seal(state.cookies),sync_state:"queued",sync_cursor:null,last_error:null,next_sync:now(),locked_until:null})});
+  const accounts=await database(`${TABLE}?on_conflict=provider_key`,{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=representation"},body:JSON.stringify({provider_key:providerKey,display_name:identity.displayName,session_cipher:await seal(state.cookies),sync_state:"queued",sync_cursor:null,history_cursor:null,last_error:null,next_sync:now(),locked_until:null})});
   const row=accounts[0];const token=random();
   await insert("xc_fb_sessions",{token_hash:await digest(token),account_id:row.id,expires_at:later(30*86400000)});
   queueWork();return {status:3,token,account:status(row)};
@@ -110,6 +111,7 @@ export async function workOne() {
     providerSession=await unseal(row.session_cipher);
     if(Array.isArray(providerSession))providerSession={cookies:providerSession};
     cookies=providerSession.cookies as CookieJar;
+    if(cursor?.stage==="history") return await workHistory(row,providerSession,lease,deadline);
     if(!cursor) {
       const tree=await readTree(cookies,providerSession.deviceId);const ids=collectIds(tree);
       if(ids.length>10000)throw new HttpError(400,"错题数量超过当前单次同步范围，请联系网站维护者。");
@@ -136,14 +138,90 @@ export async function workOne() {
     const next=importFenbiExport(cursor,previous);
     next.notebook=reuseUnchangedSource(previous,next.notebook);
     if(next.summary.warnings.length)throw new HttpError(503,"部分错题未完整返回，已保留上次成功数据。");
-    const saved=await patch(TABLE,lease,{session_cipher:await seal({...providerSession,cookies}),notebook:next.notebook,sync_cursor:null,sync_state:"idle",last_sync:now(),next_sync:later(6*3600000),locked_until:null,last_error:null});
+    const saved=await patch(TABLE,lease,{session_cipher:await seal({...providerSession,cookies}),notebook:next.notebook,sync_cursor:{stage:"history"},history_cursor:null,sync_state:"queued",last_sync:now(),next_sync:now(),locked_until:null,last_error:null});
     return saved.length?{processed:1,complete:true,count:next.notebook.questions.length}:{processed:1,cancelled:true};
   } catch(error) {
     const needsLogin=error instanceof ProviderError&&["AUTH_REQUIRED","VERIFICATION_REQUIRED"].includes(error.code);
     const needsDevice=error instanceof ProviderError&&error.httpStatus===453;
-    const saved=await patch(TABLE,lease,{...(cookies?{session_cipher:await seal({...providerSession,cookies})}:{}),sync_cursor:cursor||null,sync_state:needsLogin?"reauth":"error",last_error:needsDevice?"粉笔要求设备验证。扫码已成功，完成设备登记后才能继续读取错题。":needsLogin?"粉笔登录或验证需要更新，请在官方页面完成验证后重新连接。":"此次同步未完成，已保留上次成功数据。",locked_until:null,next_sync:later(3600000)});
-    return saved.length?{processed:1,complete:false,needsLogin}:{processed:1,cancelled:true};
+    const saved=await patch(TABLE,lease,{...(cookies?{session_cipher:await seal({...providerSession,cookies})}:{}),sync_cursor:cursor||null,sync_state:needsLogin?"reauth":"error",last_error:needsDevice?"粉笔要求设备验证。扫码已成功，完成设备登记后才能继续读取错题。":needsLogin?"粉笔登录或验证需要更新，请在官方页面完成验证后重新连接。":"此次同步未完成，已保留上次成功数据。",locked_until:null,next_sync:later(error instanceof ProviderError&&["NETWORK","PROVIDER_UNAVAILABLE"].includes(error.code)?300000:3600000)});
+    return saved.length?{processed:1,complete:false,needsLogin,failure:error instanceof ProviderError?error.code:error instanceof HttpError?`CLOUD_${error.status}`:"INTERNAL",providerStatus:error instanceof ProviderError?error.httpStatus:undefined}:{processed:1,cancelled:true};
   }
+}
+
+async function workHistory(row:any, session:any, lease:string, deadline:number) {
+  const cursor=row.history_cursor||{category:0,cursor:"",pending:[],next:null,seenCursors:[],seenKeys:[],excluded:[],pages:0};
+  const active=async()=>Boolean((await database(`${TABLE}?${lease}&select=id&limit=1`))?.length);
+  const wait=()=>new Promise(resolve=>setTimeout(resolve,400));
+  try {
+    while(cursor.category<2 && Date.now()<deadline-6000) {
+      if(!await active())return {processed:1,cancelled:true};
+      if(!cursor.pending.length) {
+        if(cursor.pages>2000)throw new Error("history safety bound");
+        const page=await readHistoryPage(session.cookies,[3,1][cursor.category],cursor.cursor,session.deviceId);
+        if(page.cursor!==null && (!page.cursor||page.cursor===cursor.cursor||cursor.seenCursors.includes(page.cursor)))throw new Error("history cursor repeated");
+        cursor.pending=page.historyItems.filter((item:any)=>item.status===1&&!cursor.seenKeys.includes(item.exerciseKey));
+        cursor.next=page.cursor;cursor.pages++;
+        if(page.cursor)cursor.seenCursors.push(page.cursor);
+        await wait();
+      }
+      while(cursor.pending.length && Date.now()<deadline-6000) {
+        if(!await active())return {processed:1,cancelled:true};
+        const item=cursor.pending[0];
+        const filter=`account_id=eq.${row.id}&exercise_key=eq.${encodeURIComponent(item.exerciseKey)}`;
+        const old=(await database(`xc_fb_exercises?${filter}&select=source_version&limit=1`))[0];
+        if(old?.source_version!==`v2:${item.updatedTime}`) {
+          const report=await readExercise(session.cookies,item.exerciseKey,"getReport",session.deviceId);await wait();
+          const solution=await readExercise(session.cookies,item.exerciseKey,"getSolution",session.deviceId);await wait();
+          let payload;
+          try{payload=normalizePractice(item,report,solution);}catch{
+            cursor.excluded.push(item.exerciseKey);cursor.seenKeys.push(item.exerciseKey);cursor.pending.shift();continue;
+          }
+          if(!await active())return {processed:1,cancelled:true};
+          await database("xc_fb_exercises?on_conflict=account_id,exercise_key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates"},body:JSON.stringify({account_id:row.id,exercise_key:item.exerciseKey,source_version:`v2:${item.updatedTime}`,payload})});
+        }
+        cursor.seenKeys.push(item.exerciseKey);cursor.pending.shift();
+      }
+      if(!cursor.pending.length) {
+        if(cursor.next===null){cursor.category++;cursor.cursor="";cursor.seenCursors=[];}
+        else cursor.cursor=cursor.next;
+      }
+    }
+    const complete=cursor.category>=2;
+    const saved=await patch(TABLE,lease,{session_cipher:await seal(session),history_cursor:complete?null:cursor,history_updated_at:now(),history_count:cursor.seenKeys.length-cursor.excluded.length,history_excluded:cursor.excluded.length,history_complete:complete,sync_cursor:complete?null:{stage:"history"},sync_state:complete?"idle":"queued",next_sync:complete?later(6*3600000):now(),locked_until:null,last_error:null});
+    return saved.length?{processed:1,history:true,complete,count:cursor.seenKeys.length-cursor.excluded.length,excluded:cursor.excluded.length}:{processed:1,cancelled:true};
+  }catch(error){
+    // Checkpoint successful pages/reports before the outer worker releases the lease.
+    await patch(TABLE,lease,{history_cursor:cursor,history_updated_at:now(),history_count:cursor.seenKeys.length-cursor.excluded.length,history_excluded:cursor.excluded.length,history_complete:false});
+    throw error;
+  }
+}
+
+async function practiceQuestion(row:any,url:URL) {
+  const exercise=url.searchParams.get("exercise")||"",id=url.searchParams.get("question")||"";
+  if(!exercise||exercise.length>2048||!/^\d{1,20}$/.test(id))throw new HttpError(400,"题目参数无效。");
+  const owned=(await database(`xc_fb_exercises?account_id=eq.${row.id}&exercise_key=eq.${encodeURIComponent(exercise)}&select=payload&limit=1`))[0];
+  const answer=owned?.payload?.answers?.find((a:any)=>a.id===id);
+  if(!answer)throw new HttpError(404,"当前账号中未找到这道已做题目。");
+  let question=(await database(`xc_fb_question_cache?account_id=eq.${row.id}&question_id=eq.${id}&select=question&limit=1`))[0]?.question;
+  if(!question){
+    const full=(await database(`${TABLE}?id=eq.${row.id}&select=notebook,session_cipher,sync_state&limit=1`))[0];
+    question=full.notebook?.questions?.find((q:any)=>q.questionId===id);
+    if(!question){
+      if(!full.session_cipher||["reauth","paused"].includes(full.sync_state))throw new HttpError(409,"请在设置连接粉笔后读取题目详情。");
+      let session=await unseal(full.session_cipher);if(Array.isArray(session))session={cookies:session};
+      const batch=await readExerciseSolutions(session.cookies,exercise,session.deviceId);
+      const known=new Set(owned.payload.answers.map((a:any)=>a.id));
+      batch.solutions=batch.solutions.filter((q:any)=>known.has(String(q.id)));
+      batch.requestedIds=batch.solutions.map((q:any)=>String(q.id));
+      const imported=importFenbiExport({schemaVersion:1,exportedAt:now(),scope:{subject:"xingce",timeRange:0},tree:batch.tree||[],requestedQuestionIds:batch.requestedIds,batches:[batch],answers:[],complete:true,warnings:[]},emptyMistakeNotebook());
+      question=imported.notebook.questions.find(q=>q.questionId===id);
+      if(!question||imported.summary.warnings.length)throw new HttpError(503,"题目详情暂未完整返回，请稍后重试。");
+      await database("xc_fb_question_cache?on_conflict=account_id,question_id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates"},body:JSON.stringify(imported.notebook.questions.map(q=>({account_id:row.id,question_id:q.questionId,question:q})))});
+    }
+    // Cache one copy of question content per account, independent of repeated attempts.
+    await database("xc_fb_question_cache?on_conflict=account_id,question_id",{method:"POST",headers:{Prefer:"resolution=ignore-duplicates"},body:JSON.stringify({account_id:row.id,question_id:id,question})});
+  }
+  return {question,answer};
 }
 
 export async function handler(req:Request):Promise<Response> {
@@ -190,11 +268,25 @@ export async function handler(req:Request):Promise<Response> {
         throw new HttpError(409,"粉笔设备验证未完成，需要官方验证；没有重复尝试。");
       }
     }
+    if(path==="/practice"&&req.method==="GET") {
+      const offset=Number(new URL(req.url).searchParams.get("offset")||0);
+      if(!Number.isSafeInteger(offset)||offset<0||offset>100000)throw new HttpError(400,"分页参数无效。");
+      const rows=await database(`xc_fb_exercises?account_id=eq.${row.id}&select=payload,reviewed_at&order=exercise_key.asc&offset=${offset}&limit=100`);
+      return response({items:rows.map((r:any)=>({...r.payload,reviewedAt:r.reviewed_at})),next:rows.length===100?offset+100:null,account:status(row)});
+    }
+    if(path==="/practice/question"&&req.method==="GET")return response(await practiceQuestion(row,new URL(req.url)));
+    if(path==="/practice/review"&&req.method==="POST") {
+      if(typeof body.key!=="string"||!body.key||body.key.length>2048)throw new HttpError(400,"练习参数无效。");
+      const saved=await patch("xc_fb_exercises",`account_id=eq.${row.id}&exercise_key=eq.${encodeURIComponent(body.key)}`,{reviewed_at:now()});
+      if(!saved.length)throw new HttpError(404,"当前账号没有这条练习。");
+      await patch(TABLE,`id=eq.${row.id}`,{history_updated_at:now()});
+      return response({reviewedAt:saved[0].reviewed_at});
+    }
     if(path==="/account"&&req.method==="GET")return response(status(row));
     if(path==="/notebook"&&req.method==="GET")return response({notebook:withProgress(row.notebook,row.progress),account:status(row)});
     if(path==="/sync"&&req.method==="POST") {
       if(!row.has_provider_session||row.sync_state==="reauth"||row.sync_state==="paused")throw new HttpError(409,"请重新扫码后再同步。");
-      if(row.last_attempt&&Date.now()-Date.parse(row.last_attempt)<120000)return response(status(row));
+      if(["syncing","queued"].includes(row.sync_state)||(row.last_attempt&&Date.now()-Date.parse(row.last_attempt)<120000))return response(status(row));
       await patch(TABLE,`id=eq.${row.id}`,{next_sync:now(),sync_state:"queued"});queueWork();return response({...status(row),syncState:"queued"});
     }
     if(path==="/logout"&&req.method==="POST") {await database(`xc_fb_sessions?token_hash=eq.${tokenHash}`,{method:"DELETE"});return response({ok:true});}
