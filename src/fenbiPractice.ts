@@ -26,7 +26,7 @@ export function completePracticeHistory(status: PracticeHistoryStatus, pages: Pr
       expectedOffset = page.next;
     }
   }
-  if (pages.at(-1)?.next !== null) return null;
+  if (pages[pages.length - 1]?.next !== null) return null;
   const unique = new Map<string, FenbiPractice>();
   for (const page of pages) for (const item of page.items) unique.set(item.key, item);
   if (typeof status.historyCount === "number" && Number.isSafeInteger(status.historyCount)

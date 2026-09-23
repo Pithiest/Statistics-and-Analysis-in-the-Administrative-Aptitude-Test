@@ -139,7 +139,7 @@ export function useFenbiPractice() {
           }
           const complete = completePracticeHistory(status, pages);
           if (!complete) {
-            const latestPageAccount = pages.at(-1)?.account;
+            const latestPageAccount = pages[pages.length - 1]?.account;
             if (latestPageAccount?.accountId === owner) setAccount(latestPageAccount as FenbiAccount);
             setError("练习历史在读取期间发生变化，已保留上次完整记录；稍后会自动重试。");
           } else {
