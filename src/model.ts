@@ -215,7 +215,6 @@ const OLD_SETTINGS_KEYS = [
   "xingce_v20_settings"
 ];
 const OLD_CLOUD_KEYS = ["pithiest_xingce_cloud_v5", "pithiest_xingce_cloud_v4", "xingce_react_cloud_v2", "xingce_v20_cloud"];
-let storageUnavailable = false;
 const storageWarnings = new Set<string>();
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -935,35 +934,29 @@ function readJson(key: string) {
 }
 
 function readStorage(key: string) {
-  if (storageUnavailable) return null;
   try {
     return localStorage.getItem(key);
   } catch (error) {
-    storageUnavailable = true;
     warnStorage("read", key, error);
     return null;
   }
 }
 
 function writeJson(key: string, value: unknown) {
-  if (storageUnavailable) return false;
   try {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
   } catch (error) {
-    storageUnavailable = true;
     warnStorage("write", key, error);
     return false;
   }
 }
 
 function removeStorage(key: string) {
-  if (storageUnavailable) return false;
   try {
     localStorage.removeItem(key);
     return true;
   } catch (error) {
-    storageUnavailable = true;
     warnStorage("remove", key, error);
     return false;
   }

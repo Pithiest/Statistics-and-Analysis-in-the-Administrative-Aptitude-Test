@@ -21,6 +21,8 @@ import {
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { flushSync } from "react-dom";
+import { createTrainingSyncSchedule, SPACE_SYNC_PULL_INTERVAL_MS } from "./syncSchedule";
+import { syncAfterLocalSave } from "./syncPersistence";
 import {
   DEFAULT_FORM,
   DEFAULT_SETTINGS,
@@ -54,8 +56,6 @@ const nav: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
   { id: "settings", label: "设置", icon: <KeyRound /> }
 ];
 
-const SYNC_DEBOUNCE_MS = 10_000;
-const PULL_INTERVAL_MS = 120_000;
 const OverviewTrendChart = lazy(() => import("./Charts").then((module) => ({ default: module.OverviewTrendChart })));
 const ModuleRadarChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleRadarChart })));
 const RecordRoute = lazy(() => import("./Views").then((module) => ({ default: module.RecordView })));
@@ -102,15 +102,23 @@ export function App() {
   const codeRef = useRef(spaceCode);
   const syncingRef = useRef(false);
   const dirtyRef = useRef(false);
-  const lastPullRef = useRef(0);
+  const spaceGenerationRef = useRef(0);
   const changeVersionRef = useRef(0);
-  const debounceRef = useRef<number>();
+  const storageFailuresRef = useRef(storageFailures);
+  const syncScheduleRef = useRef<ReturnType<typeof createTrainingSyncSchedule> | null>(null);
   const toastTimerRef = useRef<number>();
   const elapsedMsRef = useRef(0);
   const timerStartedRef = useRef<number | null>(null);
   const navigationVersionRef = useRef(0);
   const reviewVisitedRef = useRef(false);
   const transitionRef = useRef<{ skipTransition: () => void } | null>(null);
+
+  if (!syncScheduleRef.current) {
+    syncScheduleRef.current = createTrainingSyncSchedule({
+      upload: () => syncNow({ upload: true }),
+      pull: () => syncNow({ upload: false, quiet: true })
+    });
+  }
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -153,28 +161,38 @@ export function App() {
   useEffect(() => {
     recordsRef.current = records;
     if (!hydrated) return;
-    reportStorage("训练记录", saveRecords(records));
+    const saved = saveRecords(records);
+    reportStorage("训练记录", saved);
+    if (!saved) setSyncState("error");
   }, [records, hydrated]);
 
   useEffect(() => {
     settingsRef.current = settings;
     if (!hydrated) return;
     document.documentElement.dataset.theme = settings.theme;
-    reportStorage("设置", saveSettings(settings));
+    const saved = saveSettings(settings);
+    reportStorage("设置", saved);
+    if (!saved) setSyncState("error");
   }, [settings, hydrated]);
 
   useEffect(() => {
     codeRef.current = spaceCode;
     if (!hydrated) return;
-    reportStorage("空间码", saveSpaceCode(spaceCode));
+    const saved = saveSpaceCode(spaceCode);
+    reportStorage("空间码", saved);
+    if (!saved) setSyncState("error");
   }, [spaceCode, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
     const persist = () => {
-      reportStorage("训练记录", saveRecords(recordsRef.current));
-      reportStorage("设置", saveSettings(settingsRef.current));
-      reportStorage("空间码", saveSpaceCode(codeRef.current));
+      const recordsSaved = saveRecords(recordsRef.current);
+      const settingsSaved = saveSettings(settingsRef.current);
+      const codeSaved = saveSpaceCode(codeRef.current);
+      reportStorage("训练记录", recordsSaved);
+      reportStorage("设置", settingsSaved);
+      reportStorage("空间码", codeSaved);
+      if (!recordsSaved || !settingsSaved || !codeSaved) setSyncState("error");
     };
     if ("requestIdleCallback" in window) {
       const id = window.requestIdleCallback(persist, { timeout: 5000 });
@@ -188,10 +206,15 @@ export function App() {
     if (!spaceCode) return undefined;
     void pullIfDue(true);
     const runBackgroundSync = () => {
-      if (dirtyRef.current) void syncNow({ upload: true });
-      else void pullIfDue(false);
+      if (dirtyRef.current) {
+        if (!navigator.onLine) setSyncState("offline");
+        else {
+          setSyncState("pending");
+          syncScheduleRef.current?.onBackground(true);
+        }
+      } else syncScheduleRef.current?.onBackground(false);
     };
-    const interval = window.setInterval(runBackgroundSync, PULL_INTERVAL_MS);
+    const interval = window.setInterval(runBackgroundSync, SPACE_SYNC_PULL_INTERVAL_MS);
     const focus = runBackgroundSync;
     window.addEventListener("focus", focus);
     window.addEventListener("online", focus);
@@ -216,15 +239,19 @@ export function App() {
     return () => {
       window.removeEventListener("xingce:update-ready", ready);
       window.clearTimeout(toastTimerRef.current);
-      window.clearTimeout(debounceRef.current);
+      syncScheduleRef.current?.dispose();
     };
   }, []);
 
   function reportStorage(key: string, success: boolean) {
-    setStorageFailures((current) => {
-      const next = success ? current.filter((item) => item !== key) : current.includes(key) ? current : [...current, key];
-      return next.length === current.length && next.every((item, index) => item === current[index]) ? current : next;
-    });
+    const current = storageFailuresRef.current;
+    const next = success ? current.filter((item) => item !== key) : current.includes(key) ? current : [...current, key];
+    storageFailuresRef.current = next;
+    if (next.length !== current.length || next.some((item, index) => item !== current[index])) setStorageFailures(next);
+    if (success && current.length > 0 && next.length === 0) {
+      setSyncState(dirtyRef.current ? "pending" : codeRef.current ? "pending" : "local");
+      if (dirtyRef.current && codeRef.current) syncScheduleRef.current?.ensureUploadScheduled();
+    }
   }
 
   function currentElapsedMs() {
@@ -299,52 +326,84 @@ export function App() {
       setSyncState("offline");
       return;
     }
-    window.clearTimeout(debounceRef.current);
     setSyncState("pending");
-    debounceRef.current = window.setTimeout(() => void syncNow({ upload: true }), SYNC_DEBOUNCE_MS);
+    syncScheduleRef.current?.scheduleUpload();
   }
 
   function pullIfDue(force = false) {
-    const now = Date.now();
-    if (!force && now - lastPullRef.current < PULL_INTERVAL_MS) return;
-    lastPullRef.current = now;
-    void syncNow({ upload: false, quiet: !force });
+    void syncScheduleRef.current?.pullIfDue(force);
   }
 
-  async function syncNow(options: { upload?: boolean; quiet?: boolean } = {}) {
+  async function syncNow(options: { upload?: boolean; quiet?: boolean } = {}): Promise<boolean> {
     const code = normalizeCode(codeRef.current);
-    if (!code) return;
+    if (!code) return false;
     if (syncingRef.current) {
-      if (options.upload) {
-        window.clearTimeout(debounceRef.current);
-        debounceRef.current = window.setTimeout(() => void syncNow({ upload: true }), 2_000);
-      }
-      return;
+      if (options.upload) syncScheduleRef.current?.ensureUploadScheduled();
+      return false;
     }
     if (!navigator.onLine) {
       setSyncState("offline");
-      return;
+      if (options.upload) dirtyRef.current = true;
+      return false;
     }
     const upload = options.upload !== false;
     const uploadVersion = changeVersionRef.current;
+    const spaceGeneration = spaceGenerationRef.current;
     syncingRef.current = true;
     if (!options.quiet) setSyncState("syncing");
     try {
-      const { syncSpace } = await import("./cloudSync");
-      const next = await syncSpace(code, recordsRef.current, settingsRef.current, { upload });
+      const result = await syncAfterLocalSave(
+        () => {
+          const recordsSaved = saveRecords(recordsRef.current);
+          const settingsSaved = saveSettings(settingsRef.current);
+          const codeSaved = saveSpaceCode(code);
+          reportStorage("训练记录", recordsSaved);
+          reportStorage("设置", settingsSaved);
+          reportStorage("空间码", codeSaved);
+          return recordsSaved && settingsSaved && codeSaved;
+        },
+        async () => {
+          const { syncSpace } = await import("./cloudSync");
+          return syncSpace(code, recordsRef.current, settingsRef.current, { upload });
+        }
+      );
+      if (result.status === "local-save-failed") {
+        if (upload) dirtyRef.current = true;
+        setSyncState("error");
+        if (!options.quiet) notify("本机保存失败，已暂停云端同步；当前页面的改动尚未可靠写入，请先导出备份再关闭。");
+        return false;
+      }
+      const next = result.value;
+      if (spaceGenerationRef.current !== spaceGeneration || normalizeCode(codeRef.current) !== code) return false;
+
       const mergedRecords = normalizeRecords([...next.records, ...recordsRef.current]);
       const nextSettings = normalizeSettings(next.settings);
       const currentSettings = normalizeSettings(settingsRef.current);
       const mergedSettings = nextSettings.updatedAt > currentSettings.updatedAt ? nextSettings : currentSettings;
-      if (!sameRecordList(recordsRef.current, mergedRecords)) setRecords(mergedRecords);
-      if (mergedSettings.updatedAt !== currentSettings.updatedAt) setSettings(mergedSettings);
+      const recordsChanged = !sameRecordList(recordsRef.current, mergedRecords);
+      const settingsChanged = JSON.stringify(mergedSettings) !== JSON.stringify(currentSettings);
+      const recordsSaved = !recordsChanged || saveRecords(mergedRecords);
+      const settingsSaved = !settingsChanged || saveSettings(mergedSettings);
+      if (recordsChanged) reportStorage("训练记录", recordsSaved);
+      if (settingsChanged) reportStorage("设置", settingsSaved);
+      if (recordsChanged) setRecords(mergedRecords);
+      if (settingsChanged) setSettings(mergedSettings);
+      if (!recordsSaved || !settingsSaved) {
+        dirtyRef.current = true;
+        setSyncState("error");
+        notify("同步数据已载入当前页面，但本机保存失败；请先导出备份再关闭。");
+        return false;
+      }
       setLastSync(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
-      if (upload && changeVersionRef.current === uploadVersion) dirtyRef.current = false;
+      if (upload && changeVersionRef.current === uploadVersion && spaceGenerationRef.current === spaceGeneration) dirtyRef.current = false;
       setSyncState(dirtyRef.current ? "pending" : "synced");
+      return true;
     } catch (error) {
-      console.error(error);
+      console.error("Training statistics sync failed");
+      if (upload) dirtyRef.current = true;
       setSyncState("error");
       notify("同步失败，已保留本机数据，稍后会继续尝试。");
+      return false;
     } finally {
       syncingRef.current = false;
     }
@@ -353,6 +412,25 @@ export function App() {
   function updateSettings(next: Settings, shouldSync = true) {
     setSettings(stampSettings(next));
     if (shouldSync) scheduleSync();
+  }
+
+  function applySpaceCode(next: string) {
+    const normalized = normalizeCode(next);
+    if (normalized !== codeRef.current) {
+      spaceGenerationRef.current += 1;
+      syncScheduleRef.current?.cancelUpload();
+      syncScheduleRef.current?.resetPullInterval();
+      if (normalized) {
+        changeVersionRef.current += 1;
+        dirtyRef.current = true;
+      }
+    }
+    codeRef.current = normalized;
+    setSpaceCode(normalized);
+    const saved = saveSpaceCode(normalized);
+    reportStorage("空间码", saved);
+    if (!saved) setSyncState("error");
+    return saved;
   }
 
   function submit(continueInput = false) {
@@ -644,27 +722,24 @@ export function App() {
                 spaceCode={spaceCode}
                 setSpaceCode={(code) => {
                   const normalized = normalizeCode(code);
-                  codeRef.current = normalized;
-                  setSpaceCode(normalized);
-                  setSyncState(normalized ? "syncing" : "local");
-                  if (normalized) window.setTimeout(() => void syncNow({ upload: true }), 0);
+                  const saved = applySpaceCode(normalized);
+                  if (saved) setSyncState(normalized ? "syncing" : "local");
+                  if (normalized && saved) window.setTimeout(() => void syncNow({ upload: true }), 0);
                 }}
                 syncState={syncState}
                 lastSync={lastSync}
                 onGenerate={() => {
                   const code = generateCode();
-                  codeRef.current = code;
-                  setSpaceCode(code);
-                  scheduleSync();
-                  notify("空间码已生成。");
+                  if (applySpaceCode(code)) {
+                    scheduleSync();
+                    notify("空间码已生成。");
+                  }
                 }}
                 onSync={() => void syncNow({ upload: true })}
                 onClear={() => {
-                  window.clearTimeout(debounceRef.current);
+                  syncScheduleRef.current?.cancelUpload();
                   dirtyRef.current = false;
-                  codeRef.current = "";
-                  setSpaceCode("");
-                  setSyncState("local");
+                  if (applySpaceCode("")) setSyncState("local");
                   setLastSync("");
                 }}
                 onExportJson={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 7, records, settings }, null, 2), "application/json;charset=utf-8")}
