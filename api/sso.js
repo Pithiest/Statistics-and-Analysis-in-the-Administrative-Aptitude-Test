@@ -153,4 +153,6 @@ export async function handleSsoRequest(request, fetchImpl = fetch) {
   }
 }
 
-export default { fetch: handleSsoRequest };
+// The runtime may pass a context object as fetch's second argument. Keep the
+// test-only fetch injection on handleSsoRequest out of the production entrypoint.
+export default { fetch(request) { return handleSsoRequest(request); } };

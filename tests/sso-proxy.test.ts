@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleSsoRequest } from "../api/sso.js";
+import sso, { handleSsoRequest } from "../api/sso.js";
 
 const gzToken = "a".repeat(64);
 const xcToken = "b".repeat(64);
@@ -13,6 +13,24 @@ const request = (path: string, body?: object, cookie?: string, origin = "https:/
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
 const reply = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+
+test("the production fetch entrypoint ignores a runtime context second argument", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (target, options) => {
+    calls++;
+    assert.equal(String(target), "https://atwsraivphybkfmyeubd.supabase.co/functions/v1/gz-fenbi/login/start");
+    assert.deepEqual(JSON.parse(String(options?.body)), {});
+    return reply({ challenge, codeContent: "synthetic-qr", expiresAt: "2026-09-23T10:00:00Z" });
+  };
+  try {
+    const runtimeFetch = sso.fetch as (request: Request, context: object) => Promise<Response>;
+    const response = await runtimeFetch(request("start", {}), { waitUntil() {} });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { challenge, codeContent: "synthetic-qr", expiresAt: "2026-09-23T10:00:00Z" });
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test("shared QR flow returns only the XC session and stores the GZ token in an HttpOnly cookie", async () => {
   const called: Array<{ path: string; auth: string | null; body: unknown }> = [];
