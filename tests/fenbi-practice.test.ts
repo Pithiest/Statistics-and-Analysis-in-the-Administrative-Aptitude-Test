@@ -20,7 +20,7 @@ test("overlapping knowledge tags do not inflate training totals; missing time is
  const p=normalizePractice(f.history,f.report,f.solution);assert.equal(p.groups.length,1);assert.equal(practiceRecords([p])[0].total,2);assert.equal(practiceRecords([p])[0].duration,0);assert.equal(p.seconds,null);assert.equal(practiceSummary([p]).correctPace,null);
 });
 test("rejects unfinished exercises, other exercise reports, invalid dates and unknown course stats",()=>{
- for(const change of [(f:any)=>f.history.status=0,(f:any)=>f.report.ancientExerciseId.id=2,(f:any)=>f.report.subReports[0].submitTime=null,(f:any)=>f.report.subReports[1].courseReports[0].tikuPrefix="other"]){const f=fixture();change(f);assert.throws(()=>normalizePractice(f.history,f.report,f.solution));}
+ for(const change of [(f:any)=>f.history.status=0,(f:any)=>f.history.updatedTime=null,(f:any)=>f.report.ancientExerciseId.id=2,(f:any)=>f.report.subReports[0].submitTime=null,(f:any)=>f.report.subReports[1].courseReports[0].tikuPrefix="other"]){const f=fixture();change(f);assert.throws(()=>normalizePractice(f.history,f.report,f.solution));}
 });
 
 test("unanswered questions never inflate speed; module totals still retain the original paper denominator",()=>{

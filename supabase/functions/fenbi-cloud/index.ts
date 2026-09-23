@@ -50,7 +50,11 @@ export function withProgress(notebook:unknown,progress:unknown):MistakeNotebook 
 export function progressOnly(book:MistakeNotebook) {return book.questions.filter(q=>q.progress.note||q.progress.history.length||q.progress.updatedAt>"1970-01-01T00:00:00.000Z").map(q=>({id:q.id,progress:q.progress}));}
 function queueWork() { if(typeof EdgeRuntime!=="undefined") EdgeRuntime.waitUntil(workOne().catch(()=>{})); }
 async function loginStart(req:Request) {
-  const ip=req.headers.get("x-forwarded-for")?.split(",")[0]||req.headers.get("cf-connecting-ip")||"unknown";
+  // Trust only the platform's single requester-IP header. X-Forwarded-For may
+  // contain a client-supplied leading value and would let callers rotate past
+  // the QR-generation limit.
+  const forwardedIp=req.headers.get("cf-connecting-ip")?.trim()||"";
+  const ip=/^[0-9a-fA-F:.]{3,45}$/.test(forwardedIp)?forwardedIp:"unknown";
   const ipHash=await digest(`${await key()}:ip:${ip}`);
   const previous=await database(`xc_fb_logins?ip_hash=eq.${ipHash}&created_at=gt.${encodeURIComponent(later(-600000))}&select=id&limit=30`);
   if(previous.length>=30)throw new HttpError(429,"二维码生成较频繁，请十分钟后重试。");
