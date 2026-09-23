@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_SETTINGS, createRecord, dashboard, moduleDetail, today } from "../src/model.ts";
+import { DEFAULT_SETTINGS, createRecord, dashboard, moduleDetail, normalizeRecords, today } from "../src/model.ts";
 import type { ModuleName, TrainingRecord } from "../src/model.ts";
 
 function dateOffset(offset: number) {
@@ -104,4 +104,28 @@ test("record creation rejects implausibly large numeric input", () => {
   assert.ok(createRecord(base));
   assert.equal(createRecord({ ...base, total: "1001", correct: "14" }), null);
   assert.equal(createRecord({ ...base, duration: "1441" }), null);
+});
+
+test("legacy import keeps distinct same-day sessions and deduplicates re-imports", () => {
+  const date = dateOffset(0);
+  const legacy = (hour: string) => ({
+    date,
+    module: "常识判断",
+    subType: "法律常识",
+    total: 20,
+    correct: 15,
+    duration: 15,
+    errorReason: "知识盲区",
+    tags: [],
+    note: "",
+    createdAt: `${date}T${hour}:00:00.000Z`,
+    updatedAt: `${date}T${hour}:00:00.000Z`
+  });
+  const morning = legacy("08");
+  const evening = legacy("20");
+  const imported = normalizeRecords([morning, evening]);
+
+  assert.equal(imported.length, 2);
+  assert.notEqual(imported[0].id, imported[1].id);
+  assert.equal(normalizeRecords([...imported, morning]).length, 2);
 });
