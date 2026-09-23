@@ -240,7 +240,7 @@
 @media (prefers-reduced-motion: reduce) { .mistake-sync-spinning { animation: none; } }
 
 .review-tabs { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin-bottom: 3px; width: fit-content; }
-.review-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 39px; padding: 8px 18px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 13px; font-weight: 500; }
-.review-tabs button.active, .review-tabs button[aria-selected="true"] { color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--panel)); font-weight: 600; }
+.review-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 8px 18px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 13px; font-weight: 500; }
+.review-tabs button.active, .review-tabs button[aria-pressed="true"] { color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--panel)); font-weight: 600; }
 .review-tabs button:hover { color: var(--blue); }
-@media (max-width: 680px) { .review-tabs { width: 100%; } .review-tabs button { flex: 1; padding-inline: 12px; font-size: 12px; } }
+@media (max-width: 680px) { .review-tabs { width: 100%; } .review-tabs button { flex: 1 1 135px; padding-inline: 12px; font-size: 12px; } }

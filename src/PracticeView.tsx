@@ -14,7 +14,7 @@ const outcomeLabel={correct:"答对",wrong:"答错",partial:"部分正确",unans
 function matches(a:PracticeAnswer,filter:Filter){return filter==="all"||filter==="correct"&&a.outcome==="correct"||filter==="wrong"&&a.outcome!=="correct"||filter==="slow"&&a.outcome==="correct"&&a.seconds!==null&&a.seconds>90;}
 function seconds(value:number|null){return value===null?"用时未提供":`${Math.round(value)} 秒`;}
 function originalAnswer(a:PracticeAnswer){const choice=a.answer.choice;if(typeof choice==="string")return /^\d+(?:,\d+)*$/.test(choice)?choice.split(",").map(n=>Number(n)<26?String.fromCharCode(65+Number(n)):n).join("、"):choice;return Array.isArray(a.answer.blanks)?a.answer.blanks.join("；"):typeof a.answer.answer==="string"?a.answer.answer:"未提供";}
-export function PracticeView({items,session,account,selectedKey,onSelect,onSettings,onReview}:{items:FenbiPractice[];session:FenbiSession|null;account:FenbiAccount|null;selectedKey:string|null;onSelect:(key:string|null)=>void;onSettings:()=>void;onReview:(key:string)=>Promise<void>}){
+export function PracticeView({items,session,account,online,accountError,selectedKey,onSelect,onSettings,onReview}:{items:FenbiPractice[];session:FenbiSession|null;account:FenbiAccount|null;online:boolean;accountError:boolean;selectedKey:string|null;onSelect:(key:string|null)=>void;onSettings:()=>void;onReview:(key:string)=>Promise<void>}){
  const [filter,setFilter]=useState<Filter>("all"),[query,setQuery]=useState(""),[page,setPage]=useState(0),[questionId,setQuestionId]=useState<string|null>(null),[reviewBusy,setReviewBusy]=useState(false);
  const summary=useMemo(()=>practiceSummary(items),[items]);
  const selected=items.find(p=>p.key===selectedKey);
@@ -30,7 +30,7 @@ export function PracticeView({items,session,account,selectedKey,onSelect,onSetti
    <Metric label="答对时的配速" value={summary.correctPace===null?"—":`${summary.correctPace} 秒/题`} note={summary.wrongPace===null?"仅使用有真实用时的作答":`答错时平均 ${summary.wrongPace} 秒/题`} />
    <Metric label="答对但较慢" value={summary.slowCorrect.toLocaleString()} note="单题超过 90 秒，可回看解题方法" />
   </div>}
-  {!account?.historyComplete&&<div className="notice-banner" role="status">历史练习正在云端分批补齐，已有记录可以先看；关掉网页也会继续同步。</div>}
+  {!online?<div className="notice-banner" role="status">当前离线，正在查看本机缓存的练习；联网后会检查更新。</div>:account&&!account.historyComplete?<div className="notice-banner" role="status">历史练习正在云端分批补齐，已有记录可以先看；关掉网页也会继续同步。</div>:!account&&!accountError?<div className="notice-banner" role="status">正在检查练习同步状态，已缓存的记录可以先看。</div>:null}
   {!!account?.historyExcluded&&<div className="notice-banner is-warning">有 {account.historyExcluded} 次练习报告未提供完整可用数据，暂未计入统计，下次同步会重新检查。</div>}
   <div className="practice-filters" role="group" aria-label="作答筛选">{(Object.keys(labels) as Filter[]).map(f=><button key={f} className={filter===f?"active":""} aria-pressed={filter===f} onClick={()=>{setFilter(f);setPage(0);}}>{labels[f]}</button>)}</div>
   {selected ? <>
@@ -40,7 +40,7 @@ export function PracticeView({items,session,account,selectedKey,onSelect,onSetti
   </> : <>
    <div className="search"><Search/><input value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}} placeholder="搜索练习名称、日期或题型" aria-label="搜索粉笔练习" /></div>
    <section className="practice-list">{filtered.slice(page*20,page*20+20).map(p=><button className="panel practice-card" key={p.key} onClick={()=>onSelect(p.key)}><div className="practice-card-date">{p.date}<span>{p.reviewedAt?"已复盘":"可回看"}</span></div><strong>{p.title}</strong><div className="practice-card-tags">{[...new Set(p.groups.map(g=>g.module))].map(m=><span key={m}>{m}</span>)}</div><div className="practice-card-result"><span><b>{Math.round(p.correct/p.total*100)}<small>%</small></b> 正确率</span><span>{p.correct}/{p.total} 题答对<br/>{p.seconds===null?"用时未提供":`${Math.round(p.seconds/60*10)/10} 分钟实际用时`}</span><ArrowRight /></div></button>)}</section>
-   {!filtered.length&&<section className="panel practice-empty"><h3>{items.length?"没有符合筛选的练习":"正在接续你的练习记录"}</h3><p>{items.length?"调整筛选，查看其他练习。":"云端将自动读取已完成的历史练习，无需手动录入。"}</p></section>}
+   {!filtered.length&&<section className="panel practice-empty"><h3>{items.length?"没有符合筛选的练习":account?.historyComplete?"还没有可统计的已完成练习":"正在接续你的练习记录"}</h3><p>{items.length?"调整筛选，查看其他练习。":account?.historyComplete?"完成粉笔行测练习后，这里会显示可读取的记录。":"云端将自动读取已完成的历史练习，无需手动录入。"}</p></section>}
    {filtered.length>20&&<div className="practice-pagination"><button className="soft-btn" disabled={!page} onClick={()=>setPage(p=>p-1)}>上一页</button><span>{page+1} / {Math.ceil(filtered.length/20)}</span><button className="soft-btn" disabled={(page+1)*20>=filtered.length} onClick={()=>setPage(p=>p+1)}>下一页</button></div>}
   </>}
  </div>;
