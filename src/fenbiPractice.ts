@@ -18,7 +18,9 @@ function partition(nodes: any[], total: number, correct: number) {
 }
 /** Only completed, first-party reports. Never uses the report's basic.time (the allotted exam time). */
 export function normalizePractice(history: any, report: any, solution: any): FenbiPractice {
-  if (history?.status !== 1 || typeof history.exerciseKey !== "string" || !obj(report) || !obj(solution) || !Array.isArray(report.subReports)) throw new Error("incomplete exercise report");
+  const key=history?.exerciseKey,updatedTime=history?.updatedTime;
+  const validUpdatedTime=(typeof updatedTime==="string"&&!!updatedTime.trim()&&updatedTime.length<=256&&!/[\u0000-\u001f\u007f]/.test(updatedTime))||(typeof updatedTime==="number"&&Number.isFinite(updatedTime));
+  if (history?.status !== 1 || typeof key !== "string" || !key.trim() || key.length>2048 || /[\u0000-\u001f\u007f]/.test(key) || !validUpdatedTime || !obj(report) || !obj(solution) || !Array.isArray(report.subReports)) throw new Error("incomplete exercise report");
   if (report.ancientExerciseId?.id !== history.exerciseId || solution.ancientExerciseId?.id !== history.exerciseId) throw new Error("exercise identity mismatch");
   const basic = report.subReports.find((r:any)=>r.type===0);
   const course = report.subReports.flatMap((r:any)=>r.type===1 && Array.isArray(r.courseReports) ? r.courseReports : []).find((r:any)=>r.tikuPrefix==="xingce");

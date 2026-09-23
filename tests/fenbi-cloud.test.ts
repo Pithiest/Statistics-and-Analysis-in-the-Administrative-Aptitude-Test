@@ -19,6 +19,15 @@ const request = (path: string, body?: unknown, token = "a".repeat(64)) => new Re
   method: body === undefined ? "GET" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Origin: "https://xc.pithiest.cn" },
   ...(body === undefined ? {} : { body: JSON.stringify(body) })
 });
+async function sealedTestValue(value:unknown, secret:string) {
+  const bytes=new TextEncoder().encode(`xc-fenbi-session:v1:${secret}`);
+  const raw=await crypto.subtle.digest("SHA-256",bytes);
+  const key=await crypto.subtle.importKey("raw",raw,"AES-GCM",false,["encrypt"]);
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const encrypted=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(JSON.stringify(value)));
+  const b64=(input:Uint8Array)=>btoa(String.fromCharCode(...input));
+  return `${b64(iv)}.${b64(new Uint8Array(encrypted))}`;
+}
 
 test("session token hashing is stable and never stores the original capability", async () => {
   const { digest } = await cloud("hash");
@@ -39,6 +48,33 @@ test("untrusted origins, missing session tokens, and unauthenticated worker requ
   const worker = await handler(new Request("https://synthetic-edge.invalid/functions/v1/fenbi-cloud/worker", { method: "POST" }));
   assert.equal(worker.status, 401);
   assert.equal(fetches, 0);
+});
+
+test("QR generation throttling keys on the platform requester IP, not spoofable X-Forwarded-For",async t=>{
+  useEnvironment(t);
+  const runtimeSecret="e".repeat(64),counts=new Map<string,number>();let providerCalls=0;
+  t.mock.method(globalThis,"fetch",async(input,init)=>{
+    const url=new URL(String(input));
+    if(url.hostname==="synthetic-cloud.invalid"){
+      if(url.pathname.endsWith("/rpc/xc_fb_runtime_key"))return json(runtimeSecret);
+      if(url.pathname.endsWith("/xc_fb_logins")){
+        if(init?.method==="POST"){
+          const row=JSON.parse(String(init.body));counts.set(row.ip_hash,(counts.get(row.ip_hash)||0)+1);return json([row]);
+        }
+        const hash=(url.searchParams.get("ip_hash")||"").replace(/^eq\./,"");
+        return json(Array.from({length:counts.get(hash)||0},(_,id)=>({id})));
+      }
+    }
+    assert.equal(url.hostname,"ke.fenbi.com");assert.ok(url.pathname.endsWith("/gen_code"));providerCalls++;
+    return json({code:1,data:{lgtoken:"synthetic-qr-token",codeContent:"synthetic-qr-content"}});
+  });
+  const {handler}=await cloud("qr-ip-limit");
+  for(let index=0;index<30;index++){
+    const response=await handler(new Request("https://synthetic-edge.invalid/functions/v1/fenbi-cloud/login/start",{method:"POST",headers:{"Content-Type":"application/json",Origin:"https://xc.pithiest.cn","cf-connecting-ip":"203.0.113.9","x-forwarded-for":`198.51.100.${index+1}`},body:"{}"}));
+    assert.equal(response.status,200);
+  }
+  const limited=await handler(new Request("https://synthetic-edge.invalid/functions/v1/fenbi-cloud/login/start",{method:"POST",headers:{"Content-Type":"application/json",Origin:"https://xc.pithiest.cn","cf-connecting-ip":"203.0.113.9","x-forwarded-for":"192.0.2.254"},body:"{}"}));
+  assert.equal(limited.status,429);assert.equal(providerCalls,30);
 });
 
 test("expired or unknown session cannot reach account rows", async t => {
@@ -312,4 +348,33 @@ test("practice pagination, questions, and review writes are scoped by authentica
  assert.equal((await handler(request("/practice?offset=-1"))).status,400);
  assert.equal((await handler(request("/practice/question?exercise=other&question=1&accountId=account-b"))).status,404);
  assert.equal((await handler(request("/practice/review",{key:"other",accountId:"account-b"}))).status,404);
+});
+
+test("malformed completed-history page keeps its prior checkpoint and never marks the history complete",async t=>{
+  useEnvironment(t);
+  const runtimeSecret="c".repeat(64),historyCursor={category:0,cursor:"",pending:[],next:null,seenCursors:[],seenKeys:[],excluded:[],pages:0};
+  const lockedUntil=new Date(Date.now()+180000).toISOString();
+  const row={id:"account-a",locked_until:lockedUntil,session_cipher:await sealedTestValue({cookies:[]},runtimeSecret),sync_cursor:{stage:"history"},history_cursor:historyCursor,history_complete:false,history_count:4,history_excluded:0};
+  const accountPatches:Record<string,unknown>[]=[];let exerciseWrites=0;
+  t.mock.method(globalThis,"fetch",async(input,init)=>{
+    const url=new URL(String(input));
+    if(url.hostname==="synthetic-cloud.invalid"){
+      if(url.pathname.endsWith("/rpc/xc_fb_runtime_key"))return json(runtimeSecret);
+      if(url.pathname.endsWith("/rpc/xc_fb_claim_job"))return json([row]);
+      if(url.pathname.endsWith("/xc_fb_accounts")){
+        if(init?.method==="PATCH"){accountPatches.push(JSON.parse(String(init.body)));return json([{id:"account-a"}]);}
+        return json([{id:"account-a"}]);
+      }
+      if(url.pathname.endsWith("/xc_fb_exercises")){exerciseWrites++;return json([]);}
+    }
+    assert.equal(url.hostname,"tiku.fenbi.com");assert.ok(url.pathname.endsWith("getExerciseBriefHistory"));
+    return json({code:1,data:{historyItems:[{exerciseKey:"synthetic-exercise",updatedTime:1780000000000}],cursor:null}});
+  });
+  const {workOne}=await cloud("history-checkpoint");
+  const result=await workOne();
+  assert.equal(result.complete,false);assert.equal(result.failure,"INVALID_RESPONSE");assert.equal(exerciseWrites,0);
+  assert.equal(accountPatches.length,2);
+  assert.deepEqual(accountPatches[0].history_cursor,historyCursor);
+  assert.equal(accountPatches[0].history_complete,false);
+  assert.deepEqual(accountPatches[1].sync_cursor,{stage:"history"});
 });

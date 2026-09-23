@@ -283,7 +283,8 @@ export async function readAnswers(cookies: CookieJar, ids: Array<string | number
 export async function readHistoryPage(cookies: CookieJar, categoryId: number, cursor: string, deviceId?: string) {
   if (![3,1].includes(categoryId) || typeof cursor!=="string" || cursor.length>10000) throw new ProviderError("INVALID_REQUEST","历史分页参数无效。");
   const value=await request(tikuUrl("/combine/exercise/getExerciseBriefHistory",{categoryId:String(categoryId),cursor,limit:"15",routecs:"xingce"},deviceId),cookies);
-  if (!object(value)||value.code!==1||!object(value.data)||!Array.isArray(value.data.historyItems)||value.data.historyItems.some(x=>!object(x)||typeof x.exerciseKey!=="string"||x.exerciseKey.length>2048)
+  if (!object(value)||value.code!==1||!object(value.data)||!Array.isArray(value.data.historyItems)||value.data.historyItems.some(x=>!object(x)||typeof x.exerciseKey!=="string"||!x.exerciseKey.trim()||x.exerciseKey.length>2048||/[\u0000-\u001f\u007f]/.test(x.exerciseKey)||!Number.isSafeInteger(x.status)
+    ||(x.status===1&&!(typeof x.updatedTime==="string"&&!!x.updatedTime.trim()&&x.updatedTime.length<=256&&!/[\u0000-\u001f\u007f]/.test(x.updatedTime)||typeof x.updatedTime==="number"&&Number.isFinite(x.updatedTime))))
     ||(value.data.cursor!==null && typeof value.data.cursor!=="string")) throw invalidResponse();
   return value.data as {historyItems:JsonObject[];cursor:string|null};
 }
@@ -310,7 +311,12 @@ export async function readExerciseSolutions(cookies: CookieJar, exerciseKey: str
       const params=Object.fromEntries(url.searchParams);params.routecs="xingce";params.type=String(staticInfo.type);
       url=tikuUrl(url.pathname,params,deviceId);
     }
-    result=await request(url,cdn?[]:cookies,undefined,cdn);break;
+    try{
+      result=await request(url,cdn?[]:cookies,undefined,cdn);
+      break;
+    }catch(error){
+      if(error instanceof ProviderError&&["AUTH_REQUIRED","VERIFICATION_REQUIRED","RATE_LIMITED"].includes(error.code))throw error;
+    }
   }
   if(!object(result)||!Array.isArray(result.solutions)||!Array.isArray(result.materials))throw invalidResponse();
   const solutions=result.solutions.filter(q=>object(q)&&q.tikuPrefix==="xingce") as JsonObject[];
