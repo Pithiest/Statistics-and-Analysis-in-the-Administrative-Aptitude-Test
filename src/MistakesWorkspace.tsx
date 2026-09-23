@@ -7,12 +7,13 @@ import { emptyMistakeNotebook, exportMistakeNotebook, mergeMistakeNotebooks, nor
 import type { MistakeNotebook, MistakeQuestion } from "./mistakes";
 import { readNotebook, writeNotebook } from "./mistakeStorage";
 import {
-  disconnectFenbi, fenbiHealth, FENBI_SESSION_KEY, getFenbiAccount, getFenbiNotebook, getFenbiProgress, isFenbiSession, logoutFenbi,
-  mistakeErrorMessage, MistakeApiError, pollFenbiLogin, readFenbiSession, saveFenbiProgress,
+  disconnectFenbi, fenbiHealth, FENBI_SESSION_KEY, getFenbiAccount, getFenbiNotebook, getFenbiProgress, hasPendingFenbiConflict, isFenbiSession, logoutFenbi,
+  mistakeErrorMessage, MistakeApiError, pauseFenbiSession, pollFenbiLogin, readFenbiSession, readStoredFenbiSession, saveFenbiProgress,
   startFenbiLogin, storeFenbiSession, syncFenbiNow, verifyFenbiDevice,
 } from "./mistakeApi";
 import type { FenbiAccount, FenbiLoginChallenge, FenbiProgress, FenbiSession } from "./mistakeApi";
 import { collectFenbiBrowserExtras, FENBI_STARTUP_ID, hasAttemptedFenbiDevice, markFenbiDeviceAttempt } from "./fenbiDevice";
+import { getSharedFenbiSession, logoutSharedFenbi, pollSharedFenbiLogin, startSharedFenbiLogin } from "./sharedFenbiAuth";
 import "./mistakes.css";
 
 const ANONYMOUS_KEY = "anonymous-local-imports";
@@ -96,15 +97,80 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
   },[mode]);
   const [session, setSession] = useState<FenbiSession | null>(readFenbiSession);
   const sessionRef = useRef(session);
+  const pendingPreviousRef = useRef<FenbiSession | null>(hasPendingFenbiConflict() ? readStoredFenbiSession() : null);
+  const [pendingAccount, setPendingAccount] = useState(Boolean(pendingPreviousRef.current));
   const sessionRevision = useRef(0);
   const [message, setMessage] = useState("");
   const [sessionStorageError, setSessionStorageError] = useState("");
+  const [sharedCandidate, setSharedCandidate] = useState<{session:FenbiSession;account:FenbiAccount;previous:FenbiSession}|null>(null);
+  const sharedCandidateRef = useRef(sharedCandidate);
+  sharedCandidateRef.current = sharedCandidate;
+  const [sharedError, setSharedError] = useState("");
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  const logoutInFlight = useRef(false);
+  const sharedCheckBusy = useRef(false);
+  const hadSession = useRef(Boolean(session));
+  const suppressNextRestore = useRef(false);
   const finishLogin = (next: FenbiSession) => {
     if (!isFenbiSession(next)) { setMessage("本次登录没有完成，请重新扫码。"); return; }
-    if (!storeFenbiSession(next)) setSessionStorageError("浏览器未能保存登录状态，刷新后可能需要重新扫码。请保留错题备份。");
-    else setSessionStorageError("");
+    if (!storeFenbiSession(next)) { const warning="浏览器未能保存登录状态，请检查存储权限后重试；原记录仍保留。";setSessionStorageError(warning);setSharedError(warning);return; }
+    pendingPreviousRef.current = null;setPendingAccount(false);
+    setSessionStorageError("");setSharedCandidate(null);setSharedError("");
     ++sessionRevision.current; sessionRef.current = next; setMessage(""); setSession(next);
   };
+  const restoreShared = async (signal?: AbortSignal) => {
+    if (!navigator.onLine || logoutInFlight.current || sharedCandidateRef.current || sharedCheckBusy.current) return;
+    sharedCheckBusy.current = true;
+    try {
+      const result = await getSharedFenbiSession(signal);
+      if (signal?.aborted || logoutInFlight.current || sharedCandidateRef.current) return;
+      const pending = pendingPreviousRef.current;
+      if (!result) {
+        if (pending) finishLogin(pending);
+        return;
+      }
+      setSharedError("");
+      const current = sessionRef.current ?? pending;
+      if (current?.accountId === result.session.accountId) {
+        if (pending) finishLogin(current);
+        return;
+      }
+      if (current) {
+        const candidate = { ...result, previous: current };
+        sharedCandidateRef.current = candidate;setSharedCandidate(candidate);
+        suppressNextRestore.current = true;
+        pendingPreviousRef.current = current;setPendingAccount(true);
+        if (!hasPendingFenbiConflict() && !pauseFenbiSession()) {
+          setSessionStorageError("浏览器无法在刷新后保留账号选择状态，已尝试移除旧登录令牌。原账号记录仍保留，必要时请重新扫码。");
+        }
+        sessionRef.current = null;setSession(null);
+      }
+      else finishLogin(result.session);
+    } catch (failure) {
+      if (!signal?.aborted && !sessionRef.current) setSharedError(mistakeErrorMessage(failure));
+    } finally { sharedCheckBusy.current = false; }
+  };
+  useEffect(() => {
+    const controller = new AbortController();
+    void restoreShared(controller.signal);
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    const checkOnReturn = () => { if (!document.hidden) void restoreShared(controller.signal); };
+    window.addEventListener("focus", checkOnReturn);
+    document.addEventListener("visibilitychange", checkOnReturn);
+    window.addEventListener("online", checkOnReturn);
+    return () => { controller.abort();window.removeEventListener("focus", checkOnReturn);document.removeEventListener("visibilitychange", checkOnReturn);window.removeEventListener("online", checkOnReturn); };
+  }, []);
+  useEffect(() => {
+    const wasConnected = hadSession.current;
+    hadSession.current = Boolean(session);
+    if (wasConnected && !session) {
+      if (suppressNextRestore.current) suppressNextRestore.current = false;
+      else void restoreShared();
+    }
+  }, [session]);
   const clearSession = (current: FenbiSession, expired = false) => {
     if (sessionRef.current?.token !== current.token) return;
     ++sessionRevision.current; sessionRef.current = null;
@@ -112,12 +178,19 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
     setMessage(expired ? "登录已失效，请重新扫码。原账号的本机错题和复盘记录仍保留，登录同一账号即可继续。" : "已退出。原账号的本机复盘记录仍保留；以下仅显示未登录时单独导入的错题。");
     setSession(null);
   };
-  const logout = (current: FenbiSession) => {
-    clearSession(current);
-    const revision = sessionRevision.current;
-    void logoutFenbi(current.token).catch(() => {
-      if (!sessionRef.current && sessionRevision.current === revision) setMessage("本机已退出；云端会话暂未确认注销。原账号记录已从当前页面隐藏，请联网后重新登录并退出。");
-    });
+  const logout = async (current: FenbiSession) => {
+    if (logoutInFlight.current) return;
+    logoutInFlight.current = true;setLogoutBusy(true);setSharedError("");
+    try {
+      await logoutSharedFenbi();
+      try { await logoutFenbi(current.token); } catch (failure) {
+        if (!(failure instanceof MistakeApiError && failure.status === 401)) throw failure;
+      }
+      if (sessionRef.current?.token === current.token) { suppressNextRestore.current = true; clearSession(current); }
+      setSharedCandidate(null);
+    } catch (failure) {
+      setSharedError(`云端退出未完成，账号仍保持登录，请重试。${mistakeErrorMessage(failure)}`);
+    } finally { logoutInFlight.current = false;setLogoutBusy(false); }
   };
   useEffect(() => {
     const changedElsewhere = (event: StorageEvent) => {
@@ -133,10 +206,13 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
     return () => {window.removeEventListener("storage", changedElsewhere);window.removeEventListener("fenbi-session-change",samePage);};
   }, []);
   const portal=(content:React.ReactNode)=>target?createPortal(content,target):null;
+  const conflictTarget=document.getElementById("shared-identity-slot");
   return <>
+    {conflictTarget && (sharedCandidate || pendingAccount || sharedError) && createPortal(<div className="notice-banner is-warning shared-identity-notice" role="alert"><div><strong>{sharedCandidate?"两站当前连接的粉笔账号不同":pendingAccount?"正在确认两站粉笔账号":"共享账号操作未完成"}</strong><span>{sharedCandidate?`行测已暂停原账号读取；公专连接的是「${sharedCandidate.account.displayName||"另一个账号"}」。请选择要在行测使用的账号。${sharedError?` ${sharedError}`:""}`:pendingAccount?`行测已暂停原账号读取，等待确认公专账号。${sharedError?` ${sharedError}`:"联网后会自动检查。"}你也可以明确选择继续原行测账号。`:sharedError}</span></div>{(sharedCandidate || pendingAccount) && <div className="button-row">{sharedCandidate && <button className="primary-btn" onClick={()=>finishLogin(sharedCandidate.session)}>切换到公专账号</button>}<button className="soft-btn" onClick={()=>{const previous=sharedCandidate?.previous ?? pendingPreviousRef.current;if(previous)finishLogin(previous);}}>继续原行测账号</button></div>}</div>,conflictTarget)}
     {target && sessionStorageError && <div className="mistake-storage-warning" role="alert">{sessionStorageError}</div>}
-    {session ? <AccountNotebook key={`${session.accountId}:${session.token}`} session={session} mode={mode} onSettings={onSettings} portal={portal}
-      onExpired={() => clearSession(session, true)} onLogout={() => logout(session)} onReconnect={() => clearSession(session, true)} />
+    {session ? <AccountNotebook key={`${session.accountId}:${session.token}`} session={session} mode={mode} onSettings={onSettings} portal={portal} logoutBusy={logoutBusy}
+      onExpired={() => clearSession(session, true)} onLogout={() => void logout(session)} onReconnect={() => clearSession(session, true)} />
+      : sharedCandidate || pendingAccount ? portal(<div className="panel mistake-cloud-loading" role="status">请先在页面上方选择要使用的粉笔账号，原账号的读取已暂停。</div>)
       : <AnonymousNotebook key="anonymous" message={message} onLogin={finishLogin} mode={mode} onSettings={onSettings} portal={portal} />}
   </>;
 }
@@ -173,6 +249,7 @@ function AnonymousNotebook({ message, onLogin, mode,onSettings,portal }: { messa
 }
 
 function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => void; message: string }) {
+  const [loginMode, setLoginMode] = useState<"shared"|"legacy">("shared");
   const [challenge, setChallenge] = useState<FenbiLoginChallenge | null>(null);
   const [qrImage, setQrImage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -195,7 +272,7 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
     const request = new AbortController(); activeRequest.current = request;
     setBusy(true); setError(""); setChallenge(null); setQrImage(""); setStatus("idle");
     try {
-      const result = await startFenbiLogin(request.signal);
+      const result = await (loginMode==="shared"?startSharedFenbiLogin:startFenbiLogin)(request.signal);
       if (!result.challenge || typeof result.codeContent !== "string" || !result.codeContent || result.codeContent.length > 20_000) throw new Error("invalid challenge");
       const image = await QRCode.toDataURL(result.codeContent, { width: 220, margin: 2, errorCorrectionLevel: "M", color: { dark: "#142239", light: "#ffffff" } });
       if (version !== generation.current || request.signal.aborted) return;
@@ -223,7 +300,7 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
     const poll = async () => {
       if (stopped || controller.signal.aborted || generation.current !== version) return;
       try {
-        const result = await pollFenbiLogin(challenge.challenge, controller.signal);
+        const result = await (loginMode==="shared"?pollSharedFenbiLogin:pollFenbiLogin)(challenge.challenge, controller.signal);
         if (stopped || controller.signal.aborted || generation.current !== version) return;
         if (result.status === 3) {
           const session = { token: result.token, accountId: result.account?.accountId };
@@ -245,11 +322,16 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
     };
     pollTimer = setTimeout(poll, 2000);
     return () => { stopped = true; clearTimeout(pollTimer); clearInterval(clock); };
-  }, [challenge]);
+  }, [challenge,loginMode]);
+  const changeMode = () => {
+    activeRequest.current?.abort();++generation.current;
+    setChallenge(null);setQrImage("");setStatus("idle");setError("");setBusy(false);
+    setLoginMode(mode=>mode==="shared"?"legacy":"shared");
+  };
   return <section className="panel mistake-login-panel">
-    <div className="mistake-login-copy"><span className="mistake-eyebrow">粉笔账号 · 自动同步</span><h3>连接粉笔，接续全部练习</h3><p>每位同学使用自己的粉笔账号。完成的练习、正确题、错题与实际用时由云端读取，你在这里的笔记和复习安排独立保存，不会更改粉笔里的作答。</p>
+    <div className="mistake-login-copy"><span className="mistake-eyebrow">粉笔账号 · 自动同步</span><h3>{loginMode==="shared"?"扫码一次，两科目都能使用":"独立连接行测粉笔账号"}</h3><p>每位同学使用自己的粉笔账号。完成的练习、正确题、错题与实际用时由云端读取，你在这里的笔记和复习安排独立保存，不会更改粉笔里的作答。</p>
       {message && <p className="mistake-login-message" role="status">{message}</p>}
-      <ul><li>用粉笔 App 扫码，在手机确认登录。</li><li>正在同一部手机上使用？可在电脑或另一块屏幕上打开本页扫码。</li><li>未登录时导入的本机错题，不会自动并入账号。</li></ul>
+      <ul><li>用粉笔 App 扫码，在手机确认登录。{loginMode==="shared"?"确认后行测与公专会使用同一粉笔身份。":"此回退方式只连接行测站。"}</li><li>正在同一部手机上使用？可在电脑或另一块屏幕上打开本页扫码。</li><li>未登录时导入的本机错题，不会自动并入账号。</li></ul>
       <a href="https://www.fenbi.com/" target="_blank" rel="noopener noreferrer">打开粉笔官网 <span aria-hidden="true">↗</span></a>
     </div>
     <div className="mistake-login-action">
@@ -265,11 +347,12 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
       </>}
       {error && <p className="mistake-cloud-error" role="alert">{error}</p>}
       {healthError && !error && <p className="mistake-cloud-error">同步服务暂时未连接，可以稍后重试，或先导入本机错题。</p>}
+      <button className="mistake-text-button" type="button" onClick={changeMode}>{loginMode==="shared"?"统一连接暂不可用？使用行测独立扫码":"返回两科目通用扫码"}</button>
     </div>
   </section>;
 }
 
-function AccountNotebook({ session, onExpired, onLogout, onReconnect,mode,onSettings,portal }: { session: FenbiSession; onExpired: () => void; onLogout: () => void; onReconnect: () => void; portal:(node:React.ReactNode)=>React.ReactNode } & Presentation) {
+function AccountNotebook({ session, onExpired, onLogout, onReconnect,logoutBusy,mode,onSettings,portal }: { session: FenbiSession; onExpired: () => void; onLogout: () => void; onReconnect: () => void; logoutBusy:boolean; portal:(node:React.ReactNode)=>React.ReactNode } & Presentation) {
   const local = useLocalNotebook(session.accountId);
   const [account, setAccount] = useState<FenbiAccount | null>(null);
   const accountRef = useRef<FenbiAccount | null>(null);
@@ -471,7 +554,7 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect,mode,onSett
       <div className="mistake-account-identity">{online ? <Cloud /> : <CloudOff />}<div><small>粉笔账号 · 自动同步</small><strong>{account?.displayName || "我的粉笔账号"}</strong><span role="status">{statusText}</span>{account?.nextSync && account.syncState === "idle" && <small>下次自动更新 {localTime(account.nextSync)}</small>}</div></div>
       <div className="mistake-account-actions">
         {needsDeviceVerification ? <button type="button" className="soft-btn" disabled={!online || actionBusy || deviceAttempted} onClick={verifyDevice}>{actionBusy ? "正在登记设备…" : deviceAttempted ? "请完成官方验证" : "完成设备验证"}</button> : needsLogin ? <button type="button" className="soft-btn" onClick={() => callbacks.current.onReconnect()}>重新扫码连接</button> : <button type="button" className="soft-btn" disabled={!local.ready || !online || syncing || actionBusy} onClick={syncNow}><RefreshCw className={syncing ? "mistake-sync-spinning" : ""} />{syncing ? "正在同步" : "立即检查更新"}</button>}
-        <details className="mistake-account-more"><summary>更多</summary><div><button type="button" disabled={actionBusy || !online || account?.syncState === "paused"} onClick={disconnect}>停止自动同步</button><button type="button" onClick={() => callbacks.current.onLogout()}>退出此账号</button></div></details>
+        <details className="mistake-account-more"><summary>更多</summary><div><button type="button" disabled={actionBusy || !online || account?.syncState === "paused"} onClick={disconnect}>停止自动同步</button><button type="button" disabled={logoutBusy} onClick={() => callbacks.current.onLogout()}>{logoutBusy?"正在退出…":"退出此账号"}</button><small>退出会撤销两站共享连接；已有学习记录保留。</small></div></details>
       </div>
       <div className="mistake-progress-status">已保存 {account?.historyCount||0} 次练习 · {account?.questionCount||0} 道错题。打开网站自动检查更新，云端每 6 小时继续同步。{account?.historyExcluded ? `另有 ${account.historyExcluded} 次练习报告不完整，暂未计入统计。` : ""}</div><div className="mistake-progress-status" role="status">{sending ? "正在保存复盘进度到云端…" : pendingCount ? `${pendingCount} 道题的复盘进度待同步${!online ? "，联网后继续" : ""}` : "复盘先保存在本机，再同步到当前账号"}</div>
     </section> : <div className="notice-banner"><span>{account?.displayName||"我的粉笔账号"} · {statusText}</span><button className="soft-btn" onClick={onSettings}>管理账号</button></div>}

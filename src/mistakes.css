@@ -208,9 +208,10 @@
 .mistake-account-actions .soft-btn { font-size: 12px; min-height: 40px; }
 .mistake-account-more { position: relative; font-size: 12px; }
 .mistake-account-more summary { cursor: pointer; color: var(--muted); padding: 11px 2px; }
-.mistake-account-more > div { position: absolute; top: calc(100% + 7px); right: 0; z-index: 10; width: 154px; display: grid; gap: 4px; padding: 7px; border: 1px solid var(--line); background: var(--panel-solid); box-shadow: var(--soft-shadow); border-radius: 9px; }
+.mistake-account-more > div { position: absolute; top: calc(100% + 7px); right: 0; z-index: 10; width: 190px; display: grid; gap: 4px; padding: 7px; border: 1px solid var(--line); background: var(--panel-solid); box-shadow: var(--soft-shadow); border-radius: 9px; }
 .mistake-account-more button { width: 100%; min-height: 38px; border: 0; padding: 8px; border-radius: 5px; text-align: left; color: var(--text); background: transparent; font-size: 12px; }
 .mistake-account-more button:hover { background: var(--bg); }
+.mistake-account-more small { padding: 4px 8px 2px; color: var(--muted); line-height: 1.45; }
 .mistake-progress-status { flex-basis: 100%; padding-top: 11px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.7; }
 .mistake-storage-warning, .mistake-cloud-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; line-height: 1.75; }
 .mistake-storage-warning { color: var(--rose); background: color-mix(in srgb, var(--rose) 6%, var(--panel)); }

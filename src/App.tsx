@@ -541,6 +541,7 @@ export function App() {
         <div className="mobile-subject-switch"><SubjectSwitch compact /></div>
         {storageFailures.length > 0 && <div className="notice-banner is-warning" role="alert"><div><strong>本机保存遇到问题</strong><span>{storageFailures.join("、")}目前只留在本次页面，请先导出备份再关闭。</span></div><button className="soft-btn" onClick={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 7, records, settings }, null, 2), "application/json;charset=utf-8")} >导出备份</button></div>}
         {updateReady && <div className="notice-banner" role="status"><div><strong>新版本已就绪</strong><span>保存当前训练后，刷新即可使用。</span></div><button className="soft-btn" onClick={() => window.location.reload()}>刷新使用</button></div>}
+        <div id="shared-identity-slot" />
         <header className="topbar">
           <div>
             <p className="workspace-eyebrow"><span>行测数据舱</span><span className="header-date"><CalendarDays />{new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span></p>
