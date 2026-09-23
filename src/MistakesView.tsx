@@ -98,6 +98,7 @@ export function MistakesView(props: {
   const [now, setNow] = useState(() => Date.now());
   const importInput = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const returnFocusIdRef = useRef<string | null>(null);
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 60000);
     return () => window.clearInterval(id);
@@ -124,15 +125,23 @@ export function MistakesView(props: {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
   const selected = notebook.questions.find((q) => q.id === selectedId);
+  useEffect(() => {
+    if (selectedId || !returnFocusIdRef.current) return;
+    const focusId = returnFocusIdRef.current;
+    const launcher = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-question-id]"))
+      .find((button) => button.dataset.questionId === focusId);
+    (launcher || headingRef.current)?.focus();
+    returnFocusIdRef.current = null;
+  }, [selectedId]);
   const clearFilters = () => { setModule(""); setKnowledge(""); setStatus("all"); setSearch(""); setPage(0); };
   const showQuestion = (id: string, ids: string[] = [], position = 0) => {
+    returnFocusIdRef.current = id;
     setSelectedId(id); setSessionIds(ids); setSessionPosition(position); setNotice("");
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
   };
   const updateQuestion = (question: MistakeQuestion) => onChange({ ...notebook, questions: notebook.questions.map((item) => item.id === question.id ? question : item) });
   const returnToList = () => {
     setSelectedId(null); setSessionIds([]); setSessionPosition(0);
-    window.requestAnimationFrame(() => headingRef.current?.focus());
   };
   const beginReview = () => {
     const queue = filtered.map(({ question }) => question).filter((q) => dueNow(q, now))
@@ -182,11 +191,11 @@ export function MistakesView(props: {
           if (!file) return;
           setImporting(true);
           try { await props.onImport(file); }
-          catch { setNoticeError(true); setNotice("这份文件未能导入，请检查是否为错题导出或备份 JSON，再试一次。"); }
+          catch (error) { setNoticeError(true); setNotice(error instanceof Error ? error.message : "错题本备份导入失败，原错题本已保留。"); }
           finally { setImporting(false); }
         }} />
-        <button type="button" className="soft-btn" disabled={importing} onClick={() => importInput.current?.click()}><Upload />{importing ? "正在导入…" : "导入错题"}</button>
-        <button type="button" className="soft-btn" disabled={!notebook.questions.length} onClick={props.onExport}><Download />导出备份</button>
+        <button type="button" className="soft-btn" disabled={importing} onClick={() => importInput.current?.click()}><Upload />{importing ? "正在导入…" : "导入错题本备份"}</button>
+        <button type="button" className="soft-btn" disabled={!notebook.questions.length} onClick={props.onExport}><Download />导出错题本备份</button>
       </div>
     </div>
     {!notebook.questions.length ? <section className="panel mistake-empty">
@@ -194,7 +203,7 @@ export function MistakesView(props: {
       <h3>错题，留在一个地方复盘</h3>
       <p>连接粉笔同步服务，或导入插件导出的错题 JSON。题干、选项、材料和解析会一起收录。</p>
       <ol className="mistake-empty-steps"><li><b>1</b><span>同步自己的错题</span></li><li><b>2</b><span>先重做，再看解析</span></li><li><b>3</b><span>记笔记，按计划复习</span></li></ol>
-      <button type="button" className="primary-btn" disabled={importing} onClick={() => importInput.current?.click()}><Upload />导入错题文件</button>
+      <button type="button" className="primary-btn" disabled={importing} onClick={() => importInput.current?.click()}><Upload />导入错题本备份</button>
       <small>已有错题再次导入时，会合并内容并保留复盘记录。</small>
     </section> : <section className="panel mistake-library">
       <div className="mistake-library-heading">
@@ -209,7 +218,7 @@ export function MistakesView(props: {
       </div>
       {filtered.length ? <>
         <div className="mistake-question-list">
-          {filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map(({ question, preview }, index) => <button type="button" key={question.id} className="mistake-question-row" onClick={() => showQuestion(question.id)}>
+          {filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map(({ question, preview }, index) => <button type="button" key={question.id} data-question-id={question.id} className="mistake-question-row" onClick={() => showQuestion(question.id)}>
             <span className="mistake-question-number">{currentPage * PAGE_SIZE + index + 1}</span>
             <span className="mistake-question-summary">
               <span className="mistake-question-meta"><span>{question.source.module || "未分类"}</span>{question.source.knowledgePoints.slice(0, 2).map((point) => <span key={point}>{point}</span>)}</span>

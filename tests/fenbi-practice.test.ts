@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {normalizePractice,practiceRecords,practiceSummary} from "../src/fenbiPractice.ts";
+import {completePracticeHistory,markPracticeReviewed,normalizePractice,practiceRecords,practiceSummary} from "../src/fenbiPractice.ts";
 function fixture() {
  const history={status:1,exerciseKey:"synthetic-exercise",exerciseId:1,sheetName:"合成练习",updatedTime:1780000000000};
  const report={ancientExerciseId:{id:1},subReports:[{type:0,submitTime:1780000000000,time:7200},{type:1,courseReports:[{tikuPrefix:"xingce",courseStat:{questionCount:2,correctCount:1,elapseTime:100},details:[{name:"判断推理",questionCount:2,correctCount:1,time:100,children:[{name:"逻辑判断",questionCount:1,correctCount:1,time:40},{name:"类比推理",questionCount:1,correctCount:0,time:60}]}]}]}]};
@@ -20,7 +20,7 @@ test("overlapping knowledge tags do not inflate training totals; missing time is
  const p=normalizePractice(f.history,f.report,f.solution);assert.equal(p.groups.length,1);assert.equal(practiceRecords([p])[0].total,2);assert.equal(practiceRecords([p])[0].duration,0);assert.equal(p.seconds,null);assert.equal(practiceSummary([p]).correctPace,null);
 });
 test("rejects unfinished exercises, other exercise reports, invalid dates and unknown course stats",()=>{
- for(const change of [(f:any)=>f.history.status=0,(f:any)=>f.report.ancientExerciseId.id=2,(f:any)=>f.report.subReports[0].submitTime=null,(f:any)=>f.report.subReports[1].courseReports[0].tikuPrefix="other"]){const f=fixture();change(f);assert.throws(()=>normalizePractice(f.history,f.report,f.solution));}
+ for(const change of [(f:any)=>f.history.status=0,(f:any)=>f.history.updatedTime=null,(f:any)=>f.report.ancientExerciseId.id=2,(f:any)=>f.report.subReports[0].submitTime=null,(f:any)=>f.report.subReports[1].courseReports[0].tikuPrefix="other"]){const f=fixture();change(f);assert.throws(()=>normalizePractice(f.history,f.report,f.solution));}
 });
 
 test("unanswered questions never inflate speed; module totals still retain the original paper denominator",()=>{
@@ -28,4 +28,27 @@ test("unanswered questions never inflate speed; module totals still retain the o
  const p=normalizePractice(f.history,f.report,f.solution);const rows=practiceRecords([p]);
  assert.equal(p.total,2);assert.equal(rows.length,1);assert.equal(rows[0].pacedTotal,1);assert.equal(rows[0].paceSecondsTotal,40);
  assert.equal(practiceSummary([p]).answered,1);assert.equal(practiceSummary([p]).unanswered,1);
+});
+
+test("partial or mixed-version history pages cannot replace the last complete practice snapshot",()=>{
+ const practice=normalizePractice(...Object.values(fixture()) as [any,any,any]);
+ const status={accountId:"synthetic-owner",historyComplete:true,historyUpdatedAt:"2026-09-01T10:00:00.000Z",historyCount:1};
+ const first={offset:0,items:[practice],next:100,account:status};
+ const last={offset:100,items:[],next:null,account:status};
+ assert.deepEqual(completePracticeHistory(status,[first,last]),[practice]);
+ assert.equal(completePracticeHistory({...status,historyComplete:false},[first]),null);
+ assert.equal(completePracticeHistory({...status,syncState:"syncing"},[first]),null);
+ assert.equal(completePracticeHistory({...status,historyCount:2},[first]),null);
+ assert.equal(completePracticeHistory(status,[first,{...last,account:{...status,historyComplete:false}}]),null);
+ assert.equal(completePracticeHistory(status,[first,{...last,account:{...status,historyUpdatedAt:"2026-09-01T10:01:00.000Z"}}]),null);
+ assert.equal(completePracticeHistory(status,[{...first,account:{...status,accountId:"another-synthetic-owner"}}]),null);
+ assert.equal(completePracticeHistory(status,[{...first,next:0}]),null);
+});
+
+test("local practice review is reflected in training review status immediately",()=>{
+ const practice=normalizePractice(...Object.values(fixture()) as [any,any,any]);
+ const reviewed=markPracticeReviewed([practice],practice.key,"2026-09-23T10:00:00.000Z");
+ assert.equal(reviewed[0].reviewedAt,"2026-09-23T10:00:00.000Z");
+ assert.equal(practiceRecords(reviewed)[0].reviewStatus,"reviewed");
+ assert.equal(practice["reviewedAt"],undefined,"optimistic review must not mutate the previous snapshot");
 });

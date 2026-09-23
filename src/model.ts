@@ -75,6 +75,7 @@ export type ModuleConfig = {
 
 export const MAX_RECORD_TOTAL = 1000;
 export const MAX_RECORD_DURATION = 1440;
+export const MAX_TRAINING_BACKUP_SIZE = 40_000_000;
 
 export const MODULES: ModuleConfig[] = [
   {
@@ -215,7 +216,6 @@ const OLD_SETTINGS_KEYS = [
   "xingce_v20_settings"
 ];
 const OLD_CLOUD_KEYS = ["pithiest_xingce_cloud_v5", "pithiest_xingce_cloud_v4", "xingce_react_cloud_v2", "xingce_v20_cloud"];
-let storageUnavailable = false;
 const storageWarnings = new Set<string>();
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -267,11 +267,11 @@ export function subTypeOptions(module: ModuleName | "", current = "") {
 
 export function moduleSubTypes(records: TrainingRecord[], module: ModuleName) {
   const base = moduleConfig(module)?.subTypes || [];
-  const fromRecords = active(records)
-    .filter((item) => item.module === module)
-    .map((item) => item.subType)
-    .filter(Boolean);
-  return [...new Set([...base, ...fromRecords])];
+  const fromRecords = new Set(base);
+  for (const item of records) {
+    if (!item.deletedAt && item.module === module && item.subType) fromRecords.add(item.subType);
+  }
+  return [...fromRecords];
 }
 
 export function shortName(module: ModuleName | "") {
@@ -319,6 +319,74 @@ export function avgPace(records: TrainingRecord[]) {
   return total ? Math.round(seconds/total) : 0;
 }
 
+type RecordSummary = {
+  total: number;
+  correct: number;
+  hasActivity: boolean;
+  pacedTotal: number;
+  paceSeconds: number;
+  lastDate: string;
+  pending: number;
+  reviewable: number;
+  reviewed: number;
+};
+
+function emptyRecordSummary(): RecordSummary {
+  return { total: 0, correct: 0, hasActivity: false, pacedTotal: 0, paceSeconds: 0, lastDate: "", pending: 0, reviewable: 0, reviewed: 0 };
+}
+
+function addRecordToSummary(summary: RecordSummary, item: TrainingRecord) {
+  summary.total += item.total;
+  summary.correct += item.correct;
+  if (item.total > 0) summary.hasActivity = true;
+  const pacedTotal = item.pacedTotal ?? item.total;
+  const paceSeconds = item.paceSecondsTotal ?? item.duration * 60;
+  if (pacedTotal > 0 && paceSeconds > 0) {
+    summary.pacedTotal += pacedTotal;
+    summary.paceSeconds += paceSeconds;
+  }
+  if (item.date > summary.lastDate) summary.lastDate = item.date;
+  if (item.reviewStatus === "pending") summary.pending += 1;
+  if (item.correct < item.total || item.errorReason !== "无") {
+    summary.reviewable += 1;
+    if (item.reviewStatus === "reviewed") summary.reviewed += 1;
+  }
+}
+
+function aggregateRecords(records: TrainingRecord[], key: (item: TrainingRecord) => string) {
+  const groups = new Map<string, RecordSummary>();
+  for (const item of records) {
+    const groupKey = key(item);
+    let summary = groups.get(groupKey);
+    if (!summary) {
+      summary = emptyRecordSummary();
+      groups.set(groupKey, summary);
+    }
+    addRecordToSummary(summary, item);
+  }
+  return groups;
+}
+
+function aggregateRecordSummaries(records: TrainingRecord[]) {
+  const summary = emptyRecordSummary();
+  for (const item of records) addRecordToSummary(summary, item);
+  return summary;
+}
+
+function averagePace(summary: RecordSummary) {
+  return summary.pacedTotal ? Math.round(summary.paceSeconds / summary.pacedTotal) : 0;
+}
+
+function reviewSummaryFromAggregate(summary: RecordSummary) {
+  const pending = summary.reviewable - summary.reviewed;
+  return {
+    total: summary.reviewable,
+    completed: summary.reviewed,
+    pending,
+    completionRate: summary.reviewable ? Math.round((summary.reviewed / summary.reviewable) * 100) : 100
+  };
+}
+
 export function loadState() {
   const records = normalizeRecords(readJson(KEYS.records) || firstLegacy(OLD_RECORD_KEYS) || []);
   const settings = normalizeSettings(readJson(KEYS.settings) || firstLegacy(OLD_SETTINGS_KEYS) || DEFAULT_SETTINGS);
@@ -351,6 +419,66 @@ export function normalizeRecords(input: unknown): TrainingRecord[] {
     if (!current || record.updatedAt > current.updatedAt) map.set(record.id, record);
   }
   return [...map.values()].sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export function exportTrainingBackup(records: TrainingRecord[], settings: Settings) {
+  return JSON.stringify({ version: 7, records: normalizeRecords(records), settings: normalizeSettings(settings) }, null, 2);
+}
+
+export function restoreTrainingBackup(json: string, currentRecords: TrainingRecord[], currentSettings: Settings) {
+  const imported = parseTrainingBackup(json);
+  return {
+    records: imported.records.length ? normalizeRecords([...imported.records, ...currentRecords]) : currentRecords,
+    settings: imported.settings ? normalizeSettings({ ...currentSettings, ...imported.settings }) : currentSettings,
+    importedRecordCount: imported.records.length,
+    importedSettings: Boolean(imported.settings)
+  };
+}
+
+function parseTrainingBackup(json: string): { records: TrainingRecord[]; settings?: Record<string, unknown> } {
+  if (json.length > MAX_TRAINING_BACKUP_SIZE) throw new Error("训练备份超过 40 MB，请选择较小的 JSON 文件；现有数据未改动。");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json.replace(/^\uFEFF/, ""));
+  } catch {
+    throw new Error("文件不是有效的 JSON；现有训练数据未改动。");
+  }
+
+  if (Array.isArray(parsed)) {
+    const records = normalizeBackupRecords(parsed);
+    if (!records.length) throw new Error("这份文件没有可恢复的训练记录；现有数据未改动。");
+    return { records };
+  }
+  if (!isPlainObject(parsed)) throw new Error("未识别为训练备份；现有训练数据未改动。");
+  if ("questions" in parsed || "batches" in parsed) {
+    throw new Error("这是错题本备份，请到「复盘 → 粉笔错题本」导入；现有训练数据未改动。");
+  }
+  if ("practices" in parsed) {
+    throw new Error("这是粉笔练习记录文件，请到「复盘 → 全部练习」查看；现有训练数据未改动。");
+  }
+
+  const hasRecords = Object.prototype.hasOwnProperty.call(parsed, "records");
+  const hasSettings = Object.prototype.hasOwnProperty.call(parsed, "settings");
+  if (hasRecords && !Array.isArray(parsed.records)) {
+    throw new Error("训练备份中的记录列表已损坏；现有训练数据未改动。");
+  }
+  if (hasSettings && !isPlainObject(parsed.settings)) {
+    throw new Error("训练备份中的设置已损坏；现有训练数据未改动。");
+  }
+  if (!hasRecords && !hasSettings) throw new Error("未识别为训练备份；现有训练数据未改动。");
+
+  const records = hasRecords ? normalizeBackupRecords(parsed.records as unknown[]) : [];
+  const settings = hasSettings ? parsed.settings as Record<string, unknown> : undefined;
+  if (!records.length && !settings) throw new Error("这份文件没有可恢复的训练数据；现有数据未改动。");
+  return { records, settings };
+}
+
+function normalizeBackupRecords(input: unknown[]) {
+  const normalized = input.map(normalizeRecord);
+  if (normalized.some((record) => record === null)) {
+    throw new Error("训练备份中有无法识别或日期损坏的记录；现有数据未改动。");
+  }
+  return normalizeRecords(normalized as TrainingRecord[]);
 }
 
 export function normalizeSettings(input: unknown): Settings {
@@ -425,27 +553,41 @@ export function formFromTemplate(form: EntryForm, template: QuickTemplate): Entr
 
 export function dashboard(records: TrainingRecord[], settings: Settings) {
   const rows = active(records);
-  const todayRows = rows.filter((item) => item.date === today());
-  const weekRows = rows.filter((item) => item.date >= daysAgo(6));
-  const previousWeekRows = rows.filter((item) => item.date >= daysAgo(13) && item.date <= daysAgo(7));
-  const total = sum(rows, "total");
-  const correct = sum(rows, "correct");
-  const todayTotal = sum(todayRows, "total");
-  const weekTotal = sum(weekRows, "total");
-  const weekCorrect = sum(weekRows, "correct");
-  const previousWeekTotal = sum(previousWeekRows, "total");
-  const previousWeekCorrect = sum(previousWeekRows, "correct");
+  const byDate = aggregateRecords(rows, (item) => item.date);
+  const byModule = aggregateRecords(rows, (item) => item.module);
+  const totalStats = aggregateRecordSummaries(rows);
+  const todayKey = today();
+  const todayStats = byDate.get(todayKey) || emptyRecordSummary();
+  const weekStart = daysAgo(6);
+  const previousWeekStart = daysAgo(13);
+  const previousWeekEnd = daysAgo(7);
+  let weekTotal = 0;
+  let weekCorrect = 0;
+  let previousWeekTotal = 0;
+  let previousWeekCorrect = 0;
+  for (const [date, summary] of byDate) {
+    if (date >= weekStart) {
+      weekTotal += summary.total;
+      weekCorrect += summary.correct;
+    } else if (date >= previousWeekStart && date <= previousWeekEnd) {
+      previousWeekTotal += summary.total;
+      previousWeekCorrect += summary.correct;
+    }
+  }
+  const total = totalStats.total;
+  const correct = totalStats.correct;
+  const todayTotal = todayStats.total;
   const pending = rows.filter((item) => item.reviewStatus === "pending").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const review = reviewSummary(rows);
+  const review = reviewSummaryFromAggregate(totalStats);
   const moduleStats = MODULES.filter((mod) => mod.name !== "全模块测试").map((mod) => {
-    const scoped = rows.filter((item) => item.module === mod.name);
-    const scopedTotal = sum(scoped, "total");
-    const scopedCorrect = sum(scoped, "correct");
-    const scopedReview = reviewSummary(scoped);
-    const lastDate = latestDate(scoped);
+    const scoped = byModule.get(mod.name) || emptyRecordSummary();
+    const scopedTotal = scoped.total;
+    const scopedCorrect = scoped.correct;
+    const scopedReview = reviewSummaryFromAggregate(scoped);
+    const lastDate = scoped.lastDate;
     const freshness = freshnessScore(lastDate);
     const rate = percent(scopedCorrect, scopedTotal);
-    const pace = avgPace(scoped);
+    const pace = averagePace(scoped);
     return {
       ...mod,
       total: scopedTotal,
@@ -453,7 +595,7 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
       rate,
       pace,
       wrong: scopedTotal - scopedCorrect,
-      pending: scoped.filter((item) => item.reviewStatus === "pending").length,
+      pending: scoped.pending,
       lastDate,
       freshness,
       reviewRate: scopedReview.completionRate,
@@ -478,7 +620,7 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
     correct,
     totalRate: percent(correct, total),
     todayTotal,
-    todayRate: percent(sum(todayRows, "correct"), todayTotal),
+    todayRate: percent(todayStats.correct, todayTotal),
     weekTotal,
     weekRate: percent(weekCorrect, weekTotal),
     comparison: {
@@ -490,14 +632,14 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
       previousRate: percent(previousWeekCorrect, previousWeekTotal),
       rateDelta: percent(weekCorrect, weekTotal) - percent(previousWeekCorrect, previousWeekTotal)
     },
-    activeDays: new Set(rows.filter((item) => item.total > 0).map((item) => item.date)).size,
+    activeDays: [...byDate.values()].filter((summary) => summary.hasActivity).length,
     streak: trainingStreak(rows),
-    avgPace: avgPace(rows),
+    avgPace: averagePace(totalStats),
     pending,
     review,
     moduleStats,
-    trend: makeTrend(rows, 14),
-    heatmap: makeHeatmap(rows, 35),
+    trend: makeTrend(rows, 14, byDate),
+    heatmap: makeHeatmap(rows, 35, byDate),
     reasons,
     quote: quoteOfDay(),
     weak,
@@ -512,17 +654,21 @@ export function moduleDetail(records: TrainingRecord[], module: ModuleName, sett
   const allModuleRows = active(records).filter((item) => item.module === module);
   const rangedRows = range === "全部" ? allModuleRows : allModuleRows.filter((item) => item.date >= daysAgo(Number(range) - 1));
   const rows = subType === "全部题型" ? rangedRows : rangedRows.filter((item) => item.subType === subType);
-  const total = sum(rows, "total");
-  const correct = sum(rows, "correct");
+  const selectedStats = aggregateRecordSummaries(rows);
+  const total = selectedStats.total;
+  const correct = selectedStats.correct;
   const modulePaceTarget = moduleConfig(module)?.pace || 60;
-  const subTypes = moduleSubTypes(records, module).map((name) => {
-    const scoped = rangedRows.filter((item) => item.subType === name);
-    const scopedTotal = sum(scoped, "total");
-    const scopedCorrect = sum(scoped, "correct");
-    const scopedReview = reviewSummary(scoped);
+  const subTypeNames = new Set(moduleConfig(module)?.subTypes || []);
+  for (const item of allModuleRows) if (item.subType) subTypeNames.add(item.subType);
+  const bySubType = aggregateRecords(rangedRows, (item) => item.subType);
+  const subTypes = [...subTypeNames].map((name) => {
+    const scoped = bySubType.get(name) || emptyRecordSummary();
+    const scopedTotal = scoped.total;
+    const scopedCorrect = scoped.correct;
+    const scopedReview = reviewSummaryFromAggregate(scoped);
     const rate = percent(scopedCorrect, scopedTotal);
-    const pace = avgPace(scoped);
-    const lastDate = latestDate(scoped);
+    const pace = averagePace(scoped);
+    const lastDate = scoped.lastDate;
     const daysSince = lastDate ? daysBetween(lastDate, today()) : null;
     const freshness = freshnessScore(lastDate);
     const health = healthScore({
@@ -543,7 +689,7 @@ export function moduleDetail(records: TrainingRecord[], module: ModuleName, sett
       pace,
       lastDate,
       daysSince,
-      pending: scoped.filter((item) => item.reviewStatus === "pending").length,
+      pending: scoped.pending,
       health,
       risk: subTypeRisk({ total: scopedTotal, rate, pace, paceTarget: modulePaceTarget, daysSince, pending: scopedReview.pending }, settings.targetRate)
     };
@@ -552,8 +698,8 @@ export function moduleDetail(records: TrainingRecord[], module: ModuleName, sett
     .filter((item) => item.total > 0)
     .sort((a, b) => a.health - b.health || a.rate - b.rate || b.wrong - a.wrong)[0];
   const reasons = aggregateWrong(rows, (item) => item.errorReason).filter((item) => item.name !== "无").slice(0, 7);
-  const pending = rows.filter((item) => item.reviewStatus === "pending").length;
-  const pace = avgPace(rows);
+  const pending = selectedStats.pending;
+  const pace = averagePace(selectedStats);
   const actions = [
     total ? `${shortName(module)}累计 ${total} 题，正确率 ${percent(correct, total)}%。` : "这个模块还没有足够样本，先录入一组真实训练。",
     weakest ? `优先看 ${weakest.name}，当前综合风险最高。` : "题型样本还不够，先按原小项补齐记录。",
@@ -607,8 +753,15 @@ export function exportCsv(records: TrainingRecord[]) {
     item.tags.join(" "),
     item.note
   ])]
-    .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
+    .map((row) => row.map(csvCell).join(","))
     .join("\n");
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? "");
+  const formulaLike = /^[\s\uFEFF]*[=+\-@]/u.test(text) && !/^-[0-9]+(?:\.[0-9]+)?$/.test(text);
+  const safeText = formulaLike ? `'${text}` : text;
+  return `"${safeText.replace(/"/g, '""')}"`;
 }
 
 function normalizeRecord(raw: unknown): TrainingRecord | null {
@@ -624,8 +777,15 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
     created_at?: string;
     updated_at?: string;
     wrong?: number;
+    category?: string;
+    subject?: string;
+    module_name?: string;
+    moduleId?: string;
+    trainingDate?: string;
+    training_date?: string;
+    day?: string;
   };
-  const moduleText = String(item.module || "");
+  const moduleText = String(item.module || item.category || item.subject || item.module_name || item.moduleId || "");
   const subTypeText = String(item.subType || item.sub_type || item.sub || "");
   const noteText = String(item.note || "");
   let module = normalizeModule(moduleText);
@@ -639,12 +799,15 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
   if (!Number.isFinite(Number(item.correct)) && Number.isFinite(Number(item.wrong))) correct = Math.max(0, total - Number(item.wrong));
   const duration = Math.round((Number(item.duration) || 0) * 10) / 10;
   if (!total || correct > total) return null;
-  const date = validDate(String(item.date || ""), today());
+  const dateValue = [item.date, item.trainingDate, item.training_date, item.day].find((value) => value != null && String(value).trim() !== "");
+  const createdAtValue = String(item.createdAt || item.created_at || "");
+  const date = dateValue == null ? normalizeRecordDate(createdAtValue, "") : normalizeRecordDate(dateValue, "");
+  if (!date) return null;
   const errorReason = normalizeReason(String(item.errorReason || item.error_reason || item.reason || "无"));
   const subType = normalizeSubType(subTypeText, module);
-  const createdAt = validIso(String(item.createdAt || item.created_at || ""), `${date}T00:00:00.000Z`);
+  const createdAt = validIso(createdAtValue, `${date}T00:00:00.000Z`);
   const updatedAt = validIso(String(item.updatedAt || item.updated_at || ""), createdAt);
-  const id = String(item.id || "").trim() || stableLegacyId({ date, module, subType, total, correct, duration, errorReason, tags: item.tags, note: noteText });
+  const id = String(item.id || "").trim() || stableLegacyId({ date, createdAt, module, subType, total, correct, duration, errorReason, tags: item.tags, note: noteText });
   const wrong = Math.max(0, total - correct);
   const reviewed = item.reviewStatus === "reviewed" || item.review_status === "reviewed";
   return {
@@ -688,18 +851,17 @@ function normalizeTemplates(input: unknown): QuickTemplate[] {
     .slice(0, 24) as QuickTemplate[];
 }
 
-function makeTrend(records: TrainingRecord[], days: number) {
+function makeTrend(records: TrainingRecord[], days: number, byDate = aggregateRecords(records, (item) => item.date)) {
   return Array.from({ length: days }, (_, index) => {
     const date = daysAgo(days - index - 1);
-    const scoped = records.filter((item) => item.date === date);
-    const total = sum(scoped, "total");
-    const pace = avgPace(scoped);
+    const summary = byDate.get(date) || emptyRecordSummary();
+    const pace = averagePace(summary);
     return {
       date,
       label: date.slice(5),
-      total,
-      rate: total ? percent(sum(scoped, "correct"), total) : null,
-      pace: total && pace ? pace : null
+      total: summary.total,
+      rate: summary.total ? percent(summary.correct, summary.total) : null,
+      pace: summary.total && pace ? pace : null
     };
   });
 }
@@ -713,10 +875,10 @@ function trendDaysFor(records: TrainingRecord[]) {
   return Math.max(30, Math.min(90, days));
 }
 
-function makeHeatmap(records: TrainingRecord[], days: number) {
+function makeHeatmap(records: TrainingRecord[], days: number, byDate = aggregateRecords(records, (item) => item.date)) {
   return Array.from({ length: days }, (_, index) => {
     const date = daysAgo(days - index - 1);
-    const total = sum(records.filter((item) => item.date === date), "total");
+    const total = byDate.get(date)?.total || 0;
     return { date, total, level: total >= 100 ? 4 : total >= 70 ? 3 : total >= 35 ? 2 : total > 0 ? 1 : 0 };
   });
 }
@@ -742,22 +904,6 @@ function aggregateWrong(records: TrainingRecord[], key: (record: TrainingRecord)
     map.set(name, { name, value: (map.get(name)?.value || 0) + wrong });
   });
   return [...map.values()].sort((a, b) => b.value - a.value);
-}
-
-function reviewSummary(records: TrainingRecord[]) {
-  const reviewable = records.filter((item) => item.correct < item.total || item.errorReason !== "无");
-  const completed = reviewable.filter((item) => item.reviewStatus === "reviewed").length;
-  const pending = reviewable.length - completed;
-  return {
-    total: reviewable.length,
-    completed,
-    pending,
-    completionRate: reviewable.length ? Math.round((completed / reviewable.length) * 100) : 100
-  };
-}
-
-function latestDate(records: TrainingRecord[]) {
-  return records.reduce((latest, item) => (item.date > latest ? item.date : latest), "");
 }
 
 function freshnessScore(lastDate: string) {
@@ -832,12 +978,13 @@ function recommendations(data: {
 
 function trainingCoverage(records: TrainingRecord[], settings: Settings) {
   const rows = active(records);
+  const byModuleSubType = aggregateRecords(rows, (item) => `${item.module}\u0000${item.subType}`);
   const items = MODULES.filter((module) => module.name !== "全模块测试").flatMap((module, moduleIndex) =>
     module.subTypes.map((subType, subIndex) => {
-      const scoped = rows.filter((item) => item.module === module.name && item.subType === subType);
-      const total = sum(scoped, "total");
-      const correct = sum(scoped, "correct");
-      const lastDate = scoped.reduce((latest, item) => (item.date > latest ? item.date : latest), "");
+      const scoped = byModuleSubType.get(`${module.name}\u0000${subType}`) || emptyRecordSummary();
+      const total = scoped.total;
+      const correct = scoped.correct;
+      const lastDate = scoped.lastDate;
       const daysSince = lastDate ? daysBetween(lastDate, today()) : null;
       return {
         key: `${module.id}:${subType}`,
@@ -847,7 +994,7 @@ function trainingCoverage(records: TrainingRecord[], settings: Settings) {
         total,
         correct,
         rate: percent(correct, total),
-        pace: avgPace(scoped),
+        pace: averagePace(scoped),
         lastDate,
         daysSince,
         order: moduleIndex * 100 + subIndex
@@ -935,35 +1082,29 @@ function readJson(key: string) {
 }
 
 function readStorage(key: string) {
-  if (storageUnavailable) return null;
   try {
     return localStorage.getItem(key);
   } catch (error) {
-    storageUnavailable = true;
     warnStorage("read", key, error);
     return null;
   }
 }
 
 function writeJson(key: string, value: unknown) {
-  if (storageUnavailable) return false;
   try {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
   } catch (error) {
-    storageUnavailable = true;
     warnStorage("write", key, error);
     return false;
   }
 }
 
 function removeStorage(key: string) {
-  if (storageUnavailable) return false;
   try {
     localStorage.removeItem(key);
     return true;
   } catch (error) {
-    storageUnavailable = true;
     warnStorage("remove", key, error);
     return false;
   }
@@ -1069,6 +1210,24 @@ function normalizeTags(value: unknown) {
 
 function validDate(value: string, fallback: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+}
+
+function normalizeRecordDate(value: unknown, fallback: string) {
+  if (value == null || String(value).trim() === "") return fallback;
+  const match = String(value).trim().match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日)?(?:$|[T\s])/);
+  if (!match) return "";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12) return "";
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (day < 1 || day > monthDays[month - 1]) return "";
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function validIso(value: string, fallback: string) {

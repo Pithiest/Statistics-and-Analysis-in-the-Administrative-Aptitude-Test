@@ -1,6 +1,6 @@
 import {useEffect,useMemo,useState} from "react";
 import type {FenbiAccount,FenbiSession} from "./mistakeApi";
-import {getPracticeQuestion,mistakeErrorMessage} from "./mistakeApi";
+import {getPracticeQuestion,mistakeErrorMessage,MistakeApiError,readFenbiSession,storeFenbiSession} from "./mistakeApi";
 import {practiceSummary} from "./fenbiPractice";
 import type {FenbiPractice,PracticeAnswer} from "./fenbiPractice";
 import type {MistakeQuestion} from "./mistakes";
@@ -14,7 +14,7 @@ const outcomeLabel={correct:"答对",wrong:"答错",partial:"部分正确",unans
 function matches(a:PracticeAnswer,filter:Filter){return filter==="all"||filter==="correct"&&a.outcome==="correct"||filter==="wrong"&&a.outcome!=="correct"||filter==="slow"&&a.outcome==="correct"&&a.seconds!==null&&a.seconds>90;}
 function seconds(value:number|null){return value===null?"用时未提供":`${Math.round(value)} 秒`;}
 function originalAnswer(a:PracticeAnswer){const choice=a.answer.choice;if(typeof choice==="string")return /^\d+(?:,\d+)*$/.test(choice)?choice.split(",").map(n=>Number(n)<26?String.fromCharCode(65+Number(n)):n).join("、"):choice;return Array.isArray(a.answer.blanks)?a.answer.blanks.join("；"):typeof a.answer.answer==="string"?a.answer.answer:"未提供";}
-export function PracticeView({items,session,account,online,accountError,selectedKey,onSelect,onSettings,onReview}:{items:FenbiPractice[];session:FenbiSession|null;account:FenbiAccount|null;online:boolean;accountError:boolean;selectedKey:string|null;onSelect:(key:string|null)=>void;onSettings:()=>void;onReview:(key:string)=>Promise<void>}){
+export function PracticeView({items,session,account,online,accountError,selectedKey,onSelect,onSettings,onReview}:{items:FenbiPractice[];session:FenbiSession|null;account:FenbiAccount|null;online:boolean;accountError:string;selectedKey:string|null;onSelect:(key:string|null)=>void;onSettings:()=>void;onReview:(key:string)=>Promise<void>}){
  const [filter,setFilter]=useState<Filter>("all"),[query,setQuery]=useState(""),[page,setPage]=useState(0),[questionId,setQuestionId]=useState<string|null>(null),[reviewBusy,setReviewBusy]=useState(false);
  const summary=useMemo(()=>practiceSummary(items),[items]);
  const selected=items.find(p=>p.key===selectedKey);
@@ -31,6 +31,7 @@ export function PracticeView({items,session,account,online,accountError,selected
    <Metric label="答对但较慢" value={summary.slowCorrect.toLocaleString()} note="单题超过 90 秒，可回看解题方法" />
   </div>}
   {!online?<div className="notice-banner" role="status">当前离线，正在查看本机缓存的练习；联网后会检查更新。</div>:account&&!account.historyComplete?<div className="notice-banner" role="status">历史练习正在云端分批补齐，已有记录可以先看；关掉网页也会继续同步。</div>:!account&&!accountError?<div className="notice-banner" role="status">正在检查练习同步状态，已缓存的记录可以先看。</div>:null}
+  {!!accountError&&<div className="notice-banner is-warning" role="status">{accountError}</div>}
   {!!account?.historyExcluded&&<div className="notice-banner is-warning">有 {account.historyExcluded} 次练习报告未提供完整可用数据，暂未计入统计，下次同步会重新检查。</div>}
   <div className="practice-filters" role="group" aria-label="作答筛选">{(Object.keys(labels) as Filter[]).map(f=><button key={f} className={filter===f?"active":""} aria-pressed={filter===f} onClick={()=>{setFilter(f);setPage(0);}}>{labels[f]}</button>)}</div>
   {selected ? <>
@@ -48,7 +49,7 @@ export function PracticeView({items,session,account,online,accountError,selected
 function Metric({label,value,note}:{label:string;value:string;note:string}){return <div className="panel practice-metric"><span>{label}</span><strong>{value}</strong><small>{note}</small></div>;}
 function PracticeQuestion({session,exercise,questionId}:{session:FenbiSession;exercise:string;questionId:string}){
  const [data,setData]=useState<{question:MistakeQuestion;answer:PracticeAnswer}|null>(null),[error,setError]=useState(""),[revealed,setRevealed]=useState(false),[choice,setChoice]=useState("");
- useEffect(()=>{const abort=new AbortController();void getPracticeQuestion(session.token,exercise,questionId,abort.signal).then(setData).catch(e=>{if(!abort.signal.aborted)setError(mistakeErrorMessage(e));});return()=>abort.abort();},[session.token,exercise,questionId]);
+ useEffect(()=>{const abort=new AbortController();void getPracticeQuestion(session.token,exercise,questionId,abort.signal).then(setData).catch(e=>{if(!abort.signal.aborted){if(e instanceof MistakeApiError&&e.status===401&&readFenbiSession()?.token===session.token)storeFenbiSession(null);setError(mistakeErrorMessage(e));}});return()=>abort.abort();},[session.token,exercise,questionId]);
  if(error)return <div role="alert">{error}</div>;if(!data)return <div role="status" className="practice-empty">正在读取题目与解析…</div>;
  const q=data.question.source;
  return <div className="stack"><div className="practice-section-heading"><strong>当时{outcomeLabel[data.answer.outcome]} · {seconds(data.answer.seconds)}</strong><span>{q.module}</span></div>{q.materials.map((m,i)=><details className="mistake-materials" key={m.id} open><summary>阅读材料 {i+1}</summary><QuestionHtml html={m.html}/></details>)}<QuestionHtml html={q.stemHtml}/><div className="mistake-options">{q.options.map(o=><button className={`mistake-option ${choice===o.label?"is-selected":""}`} key={o.label} disabled={revealed} onClick={()=>setChoice(o.label)} aria-pressed={choice===o.label}><span className="mistake-option-label">{o.label}</span><QuestionHtml html={o.html}/></button>)}</div>{!revealed?<button className="primary-btn" onClick={()=>setRevealed(true)}>查看答案与解析</button>:<><dl className="mistake-answer-comparison"><div><dt>正确答案</dt><dd>{q.correctAnswer||"见解析"}</dd></div><div><dt>本次回看</dt><dd>{choice||"未选择"}</dd></div><div><dt>当时的作答</dt><dd>{originalAnswer(data.answer)}</dd></div></dl><QuestionHtml html={q.solutionHtml||"<p>原题暂未提供解析。</p>"}/></>}</div>;

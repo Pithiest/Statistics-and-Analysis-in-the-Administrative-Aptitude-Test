@@ -84,6 +84,7 @@ async function callUpstream(path, options, fetchImpl, signal) {
     signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
   });
   if (response.status === 401) return { status: 401, data: null };
+  if (response.status === 429) return { status: 429, data: null };
   if (!response.ok || Number(response.headers.get("content-length") || 0) > 100_000) return { status: 503, data: null };
   try {
     const text = await response.text();
@@ -126,6 +127,7 @@ export async function handleSsoRequest(request, fetchImpl = fetch) {
     if (!body) return json({ error: "请求格式不正确。" }, 400);
     if (path === "start" && Object.keys(body).length === 0) {
       const result = await callUpstream("/login/start", { body, clientIp: vercelClientIp(request) }, fetchImpl, request.signal);
+      if (result.status === 429) return json({ error: "二维码生成较频繁，请十分钟后重试。" }, 429);
       const challenge = result.data;
       if (result.status !== 200 || !CHALLENGE.test(challenge?.challenge || "") || typeof challenge.codeContent !== "string" || challenge.codeContent.length > 20_000)
         return json({ error: "暂时无法生成登录二维码。" }, 503);

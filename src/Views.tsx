@@ -1,5 +1,5 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, Suspense, lazy, useEffect, useId, useRef, useState } from "react";
+import type { ReactElement, ReactNode } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -42,6 +42,7 @@ import type { EntryForm, ModuleName, QuickTemplate, Settings, SyncState, Trainin
 
 const ModuleTrendChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleTrendChart })));
 const SubTypeBarChart = lazy(() => import("./Charts").then((module) => ({ default: module.SubTypeBarChart })));
+const LEDGER_PAGE_SIZE = 50;
 
 export function RecordView(props: {
   form: EntryForm;
@@ -82,6 +83,7 @@ export function RecordView(props: {
   return (
     <div className="stack record-page">
       <section className="form-layout">
+        <form className="record-form" onSubmit={(event) => { event.preventDefault(); props.onSave(); }}>
         <Panel title={props.editing ? "编辑训练" : "录入训练"} note="记下本次结果，让下一组训练更有方向。">
           <fieldset className="entry-section">
             <legend className="entry-section-title">训练信息</legend>
@@ -106,9 +108,9 @@ export function RecordView(props: {
           <div className="form-grid">
             <Field label="题量" hint={totalError} hintId="entry-total-hint" invalid={Boolean(totalError)}><input type="number" inputMode="numeric" min="1" max={MAX_RECORD_TOTAL} step="1" value={form.total} onChange={(event) => setTotal(event.target.value)} placeholder="完成题数" aria-invalid={Boolean(totalError)} aria-describedby={totalError ? "entry-total-hint" : undefined} /></Field>
             <Field label="正确数" hint={correctError} hintId="entry-correct-hint" invalid={Boolean(correctError)}><input type="number" inputMode="numeric" min="0" max={validTotal ? total : MAX_RECORD_TOTAL} step="1" value={form.correct} onChange={(event) => setForm({ ...form, correct: event.target.value })} placeholder="做对几题，全错请填 0" aria-invalid={Boolean(correctError)} aria-describedby={correctError ? "entry-correct-hint" : undefined} /></Field>
-            <Field label="实际用时（分钟）" hint={durationError || "填写真实用时；参考用时仅用于安排训练。"} hintId="entry-duration-hint" invalid={Boolean(durationError)}>
+            <Field label="实际用时（分钟）" inputId="entry-duration-field" hint={durationError || "填写真实用时；参考用时仅用于安排训练。"} hintId="entry-duration-hint" invalid={Boolean(durationError)}>
               <div className="input-action">
-                <input type="number" inputMode="decimal" min="0.1" max={MAX_RECORD_DURATION} step="0.1" value={form.duration} onChange={(event) => setForm({ ...form, duration: event.target.value })} placeholder="例如 15.5" aria-invalid={Boolean(durationError)} aria-describedby="entry-duration-hint" />
+                <input id="entry-duration-field" type="number" inputMode="decimal" min="0.1" max={MAX_RECORD_DURATION} step="0.1" value={form.duration} onChange={(event) => setForm({ ...form, duration: event.target.value })} placeholder="例如 15.5" aria-invalid={Boolean(durationError)} aria-describedby="entry-duration-hint" />
                 <button type="button" className="mini-btn" disabled={!form.module || !validTotal} onClick={useSuggested} title="按模块参考配速和题量估算">参考用时</button>
               </div>
             </Field>
@@ -135,12 +137,13 @@ export function RecordView(props: {
           </fieldset>
           <div className="entry-footer">
             <div className="button-row">
-              <button className="primary-btn" onClick={props.onSave} disabled={!canSave}><Save /> {props.editing ? "保存修改" : "保存训练"}</button>
-              <button className="soft-btn" onClick={props.onSaveContinue} disabled={!canSave}><Plus /> 保存并继续</button>
+              <button type="submit" className="primary-btn" disabled={!canSave}><Save /> {props.editing ? "保存修改" : "保存训练"}</button>
+              <button type="button" className="soft-btn" onClick={props.onSaveContinue} disabled={!canSave}><Plus /> 保存并继续</button>
             </div>
             {!canSave && <small>选择模块、题型并填写完整的训练结果后保存。</small>}
           </div>
         </Panel>
+        </form>
 
         <div className="side-stack">
           <Panel title="训练计时" note="结束后把计时结果填入本次记录">
@@ -384,6 +387,13 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
   onEdit: (record: TrainingRecord) => void;
   onDelete: (record: TrainingRecord) => void;
 }) {
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [query, module, reason, sort]);
+  const pageCount = Math.max(1, Math.ceil(records.length / LEDGER_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleRecords = records.slice(currentPage * LEDGER_PAGE_SIZE, (currentPage + 1) * LEDGER_PAGE_SIZE);
+  const firstVisible = records.length ? currentPage * LEDGER_PAGE_SIZE + 1 : 0;
+  const lastVisible = Math.min(records.length, (currentPage + 1) * LEDGER_PAGE_SIZE);
   const total = records.reduce((acc, item) => acc + item.total, 0);
   const correct = records.reduce((acc, item) => acc + item.correct, 0);
   const wrong = Math.max(0, total - correct);
@@ -445,7 +455,7 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
               </tr>
             </thead>
             <tbody>
-              {records.map((item) => (
+              {visibleRecords.map((item) => (
                 <tr key={item.id}>
                   <td>{item.date}</td>
                   <td><strong>{item.module}</strong><small>{item.subType}</small></td>
@@ -461,7 +471,7 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
           {!records.length && <Empty text={hasFilter ? "没有找到符合条件的记录，试试放宽筛选。" : "还没有训练记录。完成一组题后，前往「录入」保存本次结果。"} action={hasFilter ? <button className="soft-btn" onClick={clearFilters}>清除筛选</button> : undefined} />}
         </div>
         <div className="mobile-ledger">
-          {records.map((item) => (
+          {visibleRecords.map((item) => (
             <article className="ledger-card" key={item.id}>
               <div>
                 <span>{item.date}</span>
@@ -484,6 +494,14 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
           ))}
           {!records.length && <Empty text={hasFilter ? "没有找到符合条件的记录，试试放宽筛选。" : "还没有训练记录。完成一组题后，前往「录入」保存本次结果。"} action={hasFilter ? <button className="soft-btn" onClick={clearFilters}>清除筛选</button> : undefined} />}
         </div>
+        {records.length > LEDGER_PAGE_SIZE && <div className="ledger-pagination" role="group" aria-label="台账分页">
+          <span>显示 {firstVisible}–{lastVisible} 条，共 {records.length} 条</span>
+          <div className="ledger-page-actions">
+            <button className="soft-btn" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一页</button>
+            <span>{currentPage + 1} / {pageCount}</span>
+            <button className="soft-btn" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>下一页</button>
+          </div>
+        </div>}
       </section>
     </div>
   );
@@ -541,12 +559,12 @@ export function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, s
 
       <div id="fenbi-settings-slot" />
       <section className="grid-two">
-        <Panel title="数据备份" note="为训练记录留一份可带走的副本。">
-          <p className="settings-description">JSON 备份手动训练与设置；CSV 导出当前选中的统计来源。粉笔完整练习可在「复盘 → 全部练习」单独导出。</p>
+        <Panel title="数据备份" note="训练记录与错题本分别备份，恢复时选择对应文件。">
+          <p className="settings-description">训练备份 JSON 只含手动训练与设置，不含粉笔错题本。错题本备份请到「复盘 → 粉笔错题本」导入或导出；CSV 导出当前选中的统计来源。</p>
           <div className="button-row">
-            <button className="soft-btn" onClick={onExportJson}><Download /> 导出 JSON</button>
+            <button className="soft-btn" onClick={onExportJson}><Download /> 导出训练备份</button>
             <button className="soft-btn" onClick={onExportCsv}><Download /> 导出 CSV</button>
-            <label className="soft-btn file-btn"><Upload /> 导入 JSON<input type="file" accept="application/json,.json" aria-label="导入 JSON 备份文件" onChange={(event) => { onImport(event.target.files?.[0]); event.target.value = ""; }} /></label>
+            <label className="soft-btn file-btn"><Upload /> 导入训练备份<input type="file" accept="application/json,.json" aria-label="导入训练备份 JSON 文件" onChange={(event) => { onImport(event.target.files?.[0]); event.target.value = ""; }} /></label>
           </div>
         </Panel>
         <Panel title="关于">
@@ -618,8 +636,13 @@ function Panel({ title, note, children }: { title: string; note?: string; childr
   return <section className="panel"><div className="panel-head"><div><h3>{title}</h3>{note && <span>{note}</span>}</div></div>{children}</section>;
 }
 
-function Field({ label, children, hint, hintId, invalid = false }: { label: string; children: ReactNode; hint?: string; hintId?: string; invalid?: boolean }) {
-  return <label className="field"><span>{label}</span>{children}{hint && <small id={hintId} className={invalid ? "field-error" : "field-help"}>{hint}</small>}</label>;
+function Field({ label, children, hint, hintId, inputId, invalid = false }: { label: string; children: ReactNode; hint?: string; hintId?: string; inputId?: string; invalid?: boolean }) {
+  const generatedId = useId();
+  const childControl = isValidElement(children) && typeof children.type === "string" && ["input", "select", "textarea"].includes(children.type);
+  const existingId = childControl ? (children.props as { id?: string }).id : undefined;
+  const controlId = inputId || existingId || generatedId;
+  const control = childControl ? cloneElement(children as ReactElement<{ id?: string }>, { id: controlId }) : children;
+  return <div className="field"><label htmlFor={controlId}>{label}</label>{control}{hint && <small id={hintId} className={invalid ? "field-error" : "field-help"} aria-live={invalid ? "polite" : undefined} aria-atomic={invalid || undefined}>{hint}</small>}</div>;
 }
 
 function ChartBox({ children, compact = false }: { children: ReactNode; compact?: boolean }) {

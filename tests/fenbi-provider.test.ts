@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import {
-  getIdentity, pollQr, ProviderError, readAnswers, readQuestionBatch, readExerciseSolutions, readTree, registerDevice, startQr
+  getIdentity, pollQr, ProviderError, readAnswers, readQuestionBatch, readExerciseSolutions, readHistoryPage, readTree, registerDevice, startQr
 } from "../supabase/functions/fenbi-cloud/provider.ts";
 import type { CookieJar, DeviceRegistration } from "../supabase/functions/fenbi-cloud/provider.ts";
 
@@ -284,6 +284,39 @@ test("completed exercise details follow returned official URLs and attach the co
   return json({solutions:[{id:1,globalId:"q1",tikuPrefix:"xingce",content:"合成题"}],materials:[{id:8,globalId:"m1",content:"合成材料"}],card:{nodeType:0,children:[{nodeType:1,name:"资料分析",children:[{nodeType:2,key:"q1",materialKeys:["m1"]}]}]}});
  });
  const result=await readExerciseSolutions([],"synthetic-exercise","real-synthetic-test-device");assert.deepEqual(result.solutions[0].materialIndexes,[0]);assert.deepEqual(result.tree,[{name:"资料分析",questionIds:["1"]}]);
+});
+test("completed exercise details retry another official mirror after a transient first mirror failure",async t=>{
+ let staticCalls=0;
+ mockFetch(t,url=>{
+  if(url.pathname.endsWith("getSolution"))return json({code:1,data:{staticUrl:{type:1,urls:["https://files.fbstatic.cn/first","https://files.fbstatic.cn/second"]}}});
+  staticCalls++;
+  if(staticCalls===1)return json({temporary:"unavailable"},503);
+  return json({solutions:[{id:1,globalId:"q1",tikuPrefix:"xingce",content:"合成题"}],materials:[],card:{nodeType:0,children:[{nodeType:1,name:"判断推理",children:[{nodeType:2,key:"q1"}]}]}});
+ });
+ const result=await readExerciseSolutions([],"synthetic-exercise");
+ assert.equal(staticCalls,2);assert.equal(result.solutions[0].content,"合成题");
+});
+test("completed exercise details stop mirror fallback on authentication or verification responses",async t=>{
+ const calls:string[]=[];
+ mockFetch(t,url=>{
+  calls.push(url.pathname);
+  if(url.pathname.endsWith("getSolution"))return json({code:1,data:{staticUrl:{type:1,urls:["https://files.fbstatic.cn/first","https://files.fbstatic.cn/second"]}}});
+  return json({private:"synthetic"},403);
+ });
+ await assert.rejects(readExerciseSolutions([],"synthetic-exercise"),error=>error instanceof ProviderError&&error.code==="AUTH_REQUIRED");
+ assert.deepEqual(calls,["/combine/exercise/getSolution","/first"]);
+});
+test("history pages reject malformed completion state instead of advancing past unseen records",async t=>{
+ const pages=[
+  {code:1,data:{historyItems:[{exerciseKey:"synthetic-complete",status:1,updatedTime:1780000000000},{exerciseKey:"synthetic-unfinished",status:0,updatedTime:1780000000000}],cursor:null}},
+  {code:1,data:{historyItems:[{exerciseKey:"synthetic-missing-status",updatedTime:1780000000000}],cursor:null}},
+  {code:1,data:{historyItems:[{exerciseKey:"synthetic-missing-version",status:1}],cursor:null}},
+  {code:1,data:{historyItems:[{exerciseKey:"synthetic-string-status",status:"1",updatedTime:1780000000000}],cursor:null}},
+  {code:1,data:{historyItems:[{exerciseKey:"",status:0}],cursor:null}}
+ ];
+ mockFetch(t,()=>json(pages.shift()));
+ const valid=await readHistoryPage([],3,"");assert.equal(valid.historyItems.length,2);
+ for(let index=0;index<4;index++)await assert.rejects(readHistoryPage([],3,""),error=>error instanceof ProviderError&&error.code==="INVALID_RESPONSE");
 });
 test("exercise content cannot forward credentials to a supplied foreign URL or mismatched API",async t=>{
  let count=0;mockFetch(t,()=>{count++;return json({code:1,data:{staticUrl:{type:1,urls:["https://untrusted.invalid/data","https://login.fenbi.com/api/users/info"]}}});});

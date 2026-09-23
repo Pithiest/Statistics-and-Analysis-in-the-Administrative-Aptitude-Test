@@ -7,6 +7,37 @@ export type FenbiPractice = {
   seconds: number | null; groups: PracticeGroup[]; answers: PracticeAnswer[]; sourceVersion: string;
   reviewedAt?: string | null;
 };
+export type PracticeHistoryStatus = { accountId: string; historyComplete?: boolean; historyUpdatedAt?: string | null; historyCount?: number; syncState?: string };
+export type PracticeHistoryPage = { offset: number; items: FenbiPractice[]; next: number | null; account: PracticeHistoryStatus };
+
+/** A history snapshot is cacheable only when every page belongs to the same completed version. */
+export function completePracticeHistory(status: PracticeHistoryStatus, pages: PracticeHistoryPage[]): FenbiPractice[] | null {
+  if (status.historyComplete !== true || ["queued", "syncing"].includes(status.syncState || "") || pages.length === 0) return null;
+  let expectedOffset = 0;
+  for (let index = 0; index < pages.length; index++) {
+    const page = pages[index];
+    if (page.offset !== expectedOffset || page.account.accountId !== status.accountId
+      || page.account.historyComplete !== true || ["queued", "syncing"].includes(page.account.syncState || "")
+      || page.account.historyUpdatedAt !== status.historyUpdatedAt) return null;
+    if (page.next === null) {
+      if (index !== pages.length - 1) return null;
+    } else {
+      if (!Number.isSafeInteger(page.next) || page.next <= expectedOffset || page.items.length === 0) return null;
+      expectedOffset = page.next;
+    }
+  }
+  if (pages[pages.length - 1]?.next !== null) return null;
+  const unique = new Map<string, FenbiPractice>();
+  for (const page of pages) for (const item of page.items) unique.set(item.key, item);
+  if (typeof status.historyCount === "number" && Number.isSafeInteger(status.historyCount)
+    && status.historyCount >= 0 && unique.size < status.historyCount) return null;
+  return [...unique.values()].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+}
+
+export function markPracticeReviewed(practices: FenbiPractice[], key: string, reviewedAt: string): FenbiPractice[] {
+  return practices.map((practice) => practice.key === key ? { ...practice, reviewedAt } : practice);
+}
+
 const obj = (v: any): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
 const integer = (v: any) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const time = (v: any): number | null => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 864000 ? v : null;
@@ -18,7 +49,9 @@ function partition(nodes: any[], total: number, correct: number) {
 }
 /** Only completed, first-party reports. Never uses the report's basic.time (the allotted exam time). */
 export function normalizePractice(history: any, report: any, solution: any): FenbiPractice {
-  if (history?.status !== 1 || typeof history.exerciseKey !== "string" || !obj(report) || !obj(solution) || !Array.isArray(report.subReports)) throw new Error("incomplete exercise report");
+  const key=history?.exerciseKey,updatedTime=history?.updatedTime;
+  const validUpdatedTime=(typeof updatedTime==="string"&&!!updatedTime.trim()&&updatedTime.length<=256&&!/[\u0000-\u001f\u007f]/.test(updatedTime))||(typeof updatedTime==="number"&&Number.isFinite(updatedTime));
+  if (history?.status !== 1 || typeof key !== "string" || !key.trim() || key.length>2048 || /[\u0000-\u001f\u007f]/.test(key) || !validUpdatedTime || !obj(report) || !obj(solution) || !Array.isArray(report.subReports)) throw new Error("incomplete exercise report");
   if (report.ancientExerciseId?.id !== history.exerciseId || solution.ancientExerciseId?.id !== history.exerciseId) throw new Error("exercise identity mismatch");
   const basic = report.subReports.find((r:any)=>r.type===0);
   const course = report.subReports.flatMap((r:any)=>r.type===1 && Array.isArray(r.courseReports) ? r.courseReports : []).find((r:any)=>r.tikuPrefix==="xingce");

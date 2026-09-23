@@ -21,9 +21,15 @@ async function request<T>(path: "start" | "poll" | "session" | "logout", body?: 
       signal: controller.signal,
     });
     if (response.status === 401) throw new MistakeApiError("共享登录已失效，请重新扫码。", 401);
-    if (!response.ok) throw new MistakeApiError(response.status >= 500
-      ? "两科目连接暂时不可用，请稍后重试。"
-      : "两科目连接未能完成，请重试。", response.status);
+    if (response.status === 429) throw new MistakeApiError(path === "start"
+      ? "二维码生成较频繁，请十分钟后重试。"
+      : "请求较频繁，请稍后重试。", 429);
+    if (!response.ok) {
+      const message = response.status >= 500
+        ? (path === "start" ? "暂时无法生成通用二维码，请重试或使用行测独立扫码。" : "两科目连接暂时不可用，请稍后重试。")
+        : "两科目连接未能完成，请重试。";
+      throw new MistakeApiError(message, response.status);
+    }
     return await response.json() as T;
   } catch (error) {
     if (error instanceof MistakeApiError || signal?.aborted) throw error;

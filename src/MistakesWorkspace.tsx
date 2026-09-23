@@ -6,6 +6,7 @@ import { MistakesView } from "./MistakesView";
 import { emptyMistakeNotebook, exportMistakeNotebook, mergeMistakeNotebooks, normalizeMistakeNotebook, parseMistakeImport } from "./mistakes";
 import type { MistakeNotebook, MistakeQuestion } from "./mistakes";
 import { readNotebook, writeNotebook } from "./mistakeStorage";
+import { waitForStableLocalSave } from "./localSaveQueue";
 import {
   disconnectFenbi, fenbiHealth, FENBI_SESSION_KEY, getFenbiAccount, getFenbiNotebook, getFenbiProgress, hasPendingFenbiConflict, isFenbiSession, logoutFenbi,
   mistakeErrorMessage, MistakeApiError, pauseFenbiSession, pollFenbiLogin, readFenbiSession, readStoredFenbiSession, saveFenbiProgress,
@@ -42,7 +43,7 @@ function downloadNotebook(notebook: MistakeNotebook) {
   const url = URL.createObjectURL(new Blob([exportMistakeNotebook(notebook)], { type: "application/json" }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = `xingce-mistakes-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `xingce-mistakes-backup-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.append(link); link.click(); link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -181,26 +182,37 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
   const logout = async (current: FenbiSession) => {
     if (logoutInFlight.current) return;
     logoutInFlight.current = true;setLogoutBusy(true);setSharedError("");
+    suppressNextRestore.current = true;
+    ++sessionRevision.current;sessionRef.current = null;
+    if (!pauseFenbiSession()) setSessionStorageError("退出期间无法保存本机账号暂停状态；如页面仍显示旧记录，请刷新后重新确认账号。");
+    setSession(null);
     try {
       await logoutSharedFenbi();
       try { await logoutFenbi(current.token); } catch (failure) {
         if (!(failure instanceof MistakeApiError && failure.status === 401)) throw failure;
       }
-      if (sessionRef.current?.token === current.token) { suppressNextRestore.current = true; clearSession(current); }
+      const stored = readStoredFenbiSession();
+      if (stored?.token === current.token || !stored) {
+        if (!storeFenbiSession(null)) setSessionStorageError("本机登录状态未能清除，请在浏览器设置中检查存储权限。");
+        setMessage("已退出。原账号的本机复盘记录仍保留；以下仅显示未登录时单独导入的错题。");
+      } else finishLogin(stored);
       setSharedCandidate(null);
     } catch (failure) {
+      const stored = readStoredFenbiSession();
+      if (stored) finishLogin(stored);
+      else storeFenbiSession(null);
       setSharedError(`云端退出未完成，账号仍保持登录，请重试。${mistakeErrorMessage(failure)}`);
     } finally { logoutInFlight.current = false;setLogoutBusy(false); }
   };
   useEffect(() => {
     const changedElsewhere = (event: StorageEvent) => {
       if (event.key !== FENBI_SESSION_KEY && event.key !== null) return;
-      const next = readFenbiSession();
+      const next = logoutInFlight.current ? readStoredFenbiSession() : readFenbiSession();
       if (next?.token === sessionRef.current?.token) return;
       ++sessionRevision.current; sessionRef.current = next; setSession(next);
       setMessage(next ? "" : "账号已在另一页面退出，原账号复盘记录仍保留在本机。");
     };
-    const samePage=()=>{const next=readFenbiSession();if(next?.token!==sessionRef.current?.token){++sessionRevision.current;sessionRef.current=next;setSession(next);}};
+    const samePage=()=>{const next=logoutInFlight.current?null:readFenbiSession();if(next?.token!==sessionRef.current?.token){++sessionRevision.current;sessionRef.current=next;setSession(next);}};
     window.addEventListener("fenbi-session-change",samePage);
     window.addEventListener("storage", changedElsewhere);
     return () => {window.removeEventListener("storage", changedElsewhere);window.removeEventListener("fenbi-session-change",samePage);};
@@ -210,7 +222,8 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
   return <>
     {conflictTarget && (sharedCandidate || pendingAccount || sharedError) && createPortal(<div className="notice-banner is-warning shared-identity-notice" role="alert"><div><strong>{sharedCandidate?"两站当前连接的粉笔账号不同":pendingAccount?"正在确认两站粉笔账号":"共享账号操作未完成"}</strong><span>{sharedCandidate?`行测已暂停原账号读取；公专连接的是「${sharedCandidate.account.displayName||"另一个账号"}」。请选择要在行测使用的账号。${sharedError?` ${sharedError}`:""}`:pendingAccount?`行测已暂停原账号读取，等待确认公专账号。${sharedError?` ${sharedError}`:"联网后会自动检查。"}你也可以明确选择继续原行测账号。`:sharedError}</span></div>{(sharedCandidate || pendingAccount) && <div className="button-row">{sharedCandidate && <button className="primary-btn" onClick={()=>finishLogin(sharedCandidate.session)}>切换到公专账号</button>}<button className="soft-btn" onClick={()=>{const previous=sharedCandidate?.previous ?? pendingPreviousRef.current;if(previous)finishLogin(previous);}}>继续原行测账号</button></div>}</div>,conflictTarget)}
     {target && sessionStorageError && <div className="mistake-storage-warning" role="alert">{sessionStorageError}</div>}
-    {session ? <AccountNotebook key={`${session.accountId}:${session.token}`} session={session} mode={mode} onSettings={onSettings} portal={portal} logoutBusy={logoutBusy}
+    {logoutBusy ? portal(<div className="panel mistake-cloud-loading" role="status">正在退出粉笔账号，当前账号的后台读取和复盘请求已暂停。</div>)
+      : session ? <AccountNotebook key={`${session.accountId}:${session.token}`} session={session} mode={mode} onSettings={onSettings} portal={portal} logoutBusy={logoutBusy}
       onExpired={() => clearSession(session, true)} onLogout={() => void logout(session)} onReconnect={() => clearSession(session, true)} />
       : sharedCandidate || pendingAccount ? portal(<div className="panel mistake-cloud-loading" role="status">请先在页面上方选择要使用的粉笔账号，原账号的读取已暂停。</div>)
       : <AnonymousNotebook key="anonymous" message={message} onLogin={finishLogin} mode={mode} onSettings={onSettings} portal={portal} />}
@@ -234,7 +247,7 @@ function AnonymousNotebook({ message, onLogin, mode,onSettings,portal }: { messa
       if (!alive.current) return;
       local.commit(mergeMistakeNotebooks(local.notebookRef.current, result.notebook)); setImportError("");
       setImportNotice(`已导入：新增 ${result.summary.added} 题，更新 ${result.summary.updated} 题。这份错题本仅保存在当前浏览器，登录后不会自动混入任何账号。`);
-    } catch { if (alive.current) setImportError("文件未能导入，请选择插件导出或本网站备份的错题 JSON，且不超过 40 MB。"); }
+    } catch (error) { if (alive.current) setImportError(error instanceof Error ? error.message : "错题本备份导入失败，原错题本已保留。"); }
   };
   const connection = <div className="stack">
     {mode==="settings" ? <LoginPanel onLogin={onLogin} message={message} /> : <div className="notice-banner"><span>在设置连接粉笔账号，自动同步全部练习与错题。</span><button className="soft-btn" onClick={onSettings}>前往设置</button></div>}
@@ -261,11 +274,13 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
   const activeRequest = useRef<AbortController | null>(null);
   const loginCallback = useRef(onLogin);
   loginCallback.current = onLogin;
+  useEffect(() => () => { ++generation.current; activeRequest.current?.abort(); }, []);
   useEffect(() => {
+    if (loginMode !== "legacy") return;
     const request = new AbortController();
     void fenbiHealth(request.signal).catch(() => { if (!request.signal.aborted) setHealthError(true); });
-    return () => { request.abort(); ++generation.current; activeRequest.current?.abort(); };
-  }, []);
+    return () => request.abort();
+  }, [loginMode]);
   const begin = async () => {
     const version = ++generation.current;
     activeRequest.current?.abort();
@@ -273,8 +288,14 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
     setBusy(true); setError(""); setChallenge(null); setQrImage(""); setStatus("idle");
     try {
       const result = await (loginMode==="shared"?startSharedFenbiLogin:startFenbiLogin)(request.signal);
-      if (!result.challenge || typeof result.codeContent !== "string" || !result.codeContent || result.codeContent.length > 20_000) throw new Error("invalid challenge");
-      const image = await QRCode.toDataURL(result.codeContent, { width: 220, margin: 2, errorCorrectionLevel: "M", color: { dark: "#142239", light: "#ffffff" } });
+      if (!result.challenge || typeof result.codeContent !== "string" || !result.codeContent || result.codeContent.length > 20_000)
+        throw new MistakeApiError("登录二维码内容异常，请重新生成或切换行测独立扫码。");
+      let image: string;
+      try {
+        image = await QRCode.toDataURL(result.codeContent, { width: 220, margin: 2, errorCorrectionLevel: "M", color: { dark: "#142239", light: "#ffffff" } });
+      } catch {
+        throw new MistakeApiError("二维码暂时无法显示，请重试或切换行测独立扫码。");
+      }
       if (version !== generation.current || request.signal.aborted) return;
       setChallenge(result); setQrImage(image); setStatus("waiting"); setHealthError(false);
     } catch (failure) {
@@ -325,7 +346,7 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
   }, [challenge,loginMode]);
   const changeMode = () => {
     activeRequest.current?.abort();++generation.current;
-    setChallenge(null);setQrImage("");setStatus("idle");setError("");setBusy(false);
+    setChallenge(null);setQrImage("");setStatus("idle");setError("");setHealthError(false);setBusy(false);
     setLoginMode(mode=>mode==="shared"?"legacy":"shared");
   };
   return <section className="panel mistake-login-panel">
@@ -438,8 +459,9 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect,logoutBusy,
     if (!valid() || !local.ready || uploading.current || !navigator.onLine) return;
     uploading.current = true;
     try {
-      await local.saveQueue.current;
+      const saved = await waitForStableLocalSave(() => local.saveQueue.current);
       if (!valid()) return;
+      if (!saved) { setPendingCount(changedProgress().length); return; }
       const changes = changedProgress();
       if (!changes.length) { setPendingCount(0); return; }
       setSending(true);
@@ -480,7 +502,7 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect,logoutBusy,
       else if (Date.now() - lastPullAttempt.current >= PULL_INTERVAL) void currentActions.current.pull();
     }, 5000);
     const onVisibility = () => { if (!document.hidden) { void currentActions.current.pollAccount(); void currentActions.current.flush(); } };
-    const onOnline = () => { setOnline(true); void currentActions.current.pull(true); };
+    const onOnline = () => { setOnline(true); void currentActions.current.pull(true); scheduleProgress(); };
     const onOffline = () => setOnline(false);
     window.addEventListener("online", onOnline); window.addEventListener("offline", onOffline); document.addEventListener("visibilitychange", onVisibility);
     return () => { clearInterval(polling); window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); document.removeEventListener("visibilitychange", onVisibility); };
@@ -488,7 +510,7 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect,logoutBusy,
   const changeNotebook = (next: MistakeNotebook) => { local.commit(next); scheduleProgress(); };
   const importFile = async (file: File) => {
     try { const result = await parseFile(file, local.notebookRef.current); if (valid()) { setPendingImport(result); setCloudError(""); } }
-    catch { if (valid()) setCloudError("文件未能导入，请选择插件导出或本网站备份的错题 JSON，且不超过 40 MB。"); }
+    catch (error) { if (valid()) setCloudError(error instanceof Error ? error.message : "错题本备份导入失败，原错题本已保留。"); }
   };
   const confirmImport = () => {
     if (!pendingImport) return;
