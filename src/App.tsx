@@ -705,7 +705,7 @@ export function App() {
                 <button aria-pressed={reviewTab === "training"} className={reviewTab === "training" ? "active" : ""} onClick={() => setReviewTab("training")}>训练复盘{data.pending.length ? ` · ${data.pending.length}` : ""}</button>
                 <button aria-pressed={reviewTab === "practice"} className={reviewTab === "practice"?"active":""} onClick={() => setReviewTab("practice")}>全部练习{fenbi.items.length?` · ${fenbi.items.length}`:""}</button>
               </div>
-              {reviewTab === "questions" ? <div id="fenbi-review-slot" /> : reviewTab==="practice" ? <PracticeRoute items={fenbi.items} session={fenbi.session} account={fenbi.account} online={online} accountError={Boolean(fenbi.error)} selectedKey={practiceKey} onSelect={setPracticeKey} onSettings={()=>navigate("settings")} onReview={fenbi.markReviewed} /> : <ReviewRoute records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
+              {reviewTab === "questions" ? <div id="fenbi-review-slot" /> : reviewTab==="practice" ? <PracticeRoute items={fenbi.items} session={fenbi.session} account={fenbi.account} online={online} accountError={fenbi.error} selectedKey={practiceKey} onSelect={setPracticeKey} onSettings={()=>navigate("settings")} onReview={fenbi.markReviewed} /> : <ReviewRoute records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
             </div>}
             {view === "ledger" && (
               <LedgerRoute
