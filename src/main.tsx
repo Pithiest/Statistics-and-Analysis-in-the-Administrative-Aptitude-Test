@@ -23,7 +23,7 @@ class RootErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundary
     return (
       <main className="runtime-fallback">
         <strong>页面加载异常</strong>
-        <span>本机数据不会丢失。请刷新一次，系统会自动清理旧缓存。</span>
+        <span>请重新加载应用；本机记录会保留。</span>
         <button onClick={() => reloadAfterRuntimeFailure("boundary", true)}>刷新恢复</button>
       </main>
     );
@@ -115,9 +115,7 @@ function reloadAfterRuntimeFailure(reason: string, force = false) {
   const key = `pithiest-runtime-reload-${reason}`;
   if (!force && hasRuntimeReloadMark(key)) return;
   markRuntimeReload(key);
-  clearRuntimeCaches()
-    .catch(() => {})
-    .finally(() => window.location.reload());
+  window.location.reload();
 }
 
 function hasRuntimeReloadMark(key: string) {
@@ -136,10 +134,4 @@ function markRuntimeReload(key: string) {
   } catch {
     return;
   }
-}
-
-async function clearRuntimeCaches() {
-  if (!("caches" in window)) return;
-  const keys = await caches.keys();
-  await Promise.all(keys.filter((key) => key.startsWith("pithiest-xingce-")).map((key) => caches.delete(key)));
 }

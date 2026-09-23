@@ -60,8 +60,8 @@
             <span>图表按需加载</span>
           </div>
           <div class="preload-slow" role="status">
-            <span>网络偏慢，可继续等待；如果一直停在这里，刷新会清理旧缓存。</span>
-            <button id="preload-retry" type="button">刷新恢复</button>
+            <span>网络偏慢，可继续等待或重新加载；离线时会继续使用已缓存版本。</span>
+            <button id="preload-retry" type="button">重新加载</button>
           </div>
         </section>
       </main>
@@ -73,16 +73,8 @@
           if (shell) shell.classList.add("is-slow");
         }, 12000);
 
-        document.addEventListener("click", async (event) => {
+        document.addEventListener("click", (event) => {
           if (!(event.target instanceof HTMLElement) || event.target.id !== "preload-retry") return;
-          try {
-            if ("caches" in window) {
-              const keys = await caches.keys();
-              await Promise.all(keys.filter((key) => key.startsWith("pithiest-xingce-")).map((key) => caches.delete(key)));
-            }
-          } catch {
-            // Reload anyway; the app also has runtime recovery after hydration.
-          }
           window.location.reload();
         });
       })();

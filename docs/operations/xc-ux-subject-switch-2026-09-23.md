@@ -26,3 +26,9 @@
 行测 PR #1 合并提交为 `7b0cd880ef6aa381fc0ecc36ebc061dc3dec438b`，Vercel 生产部署 `dpl_81g2j95uVC4sTGpmM9XhdSP3XUWn` 为 Ready，正式域名 `xc.pithiest.cn` 指向该部署。正式站在隔离浏览器的 390、1440 像素加载和刷新正常，无页面错误；主脚本 `index-BIwXQhCE.js`、样式 `index-COSSQNQu.css` 与 Service Worker 返回 HTTP 200。手机入口实际跳转到了 `gz.pithiest.cn`。
 
 公专的反向入口保存在独立检出 `/Users/pithiest/gongzhuan-study-ux` 的提交 `fb6102383ba150c2a657a767da412301fb10093a`，交由现行公专工程整合发布；不能将本机的公专布局检查当作公专正式域名的反向入口验收。两站真实账号跨设备与长期网络表现也未在本轮验证。
+
+## 2026-09-23 PWA 缓存升级复核
+
+复核发现：旧 Service Worker 会在入口脚本或样式未能预缓存时仍切换版本，并在激活时删除此前缓存；加载恢复按钮也会清除全部站点离线资源。两处都不删除 localStorage/IndexedDB 训练数据，但会削弱离线回退。已将新缓存隔离为 v13，要求入口 HTML 与入口静态资源全部预热成功后才允许切换，并保留当前版本及上一代缓存；加载恢复改为直接重载，不再清空 CacheStorage。
+
+本地合成 Service Worker/CacheStorage 测试覆盖升级资源失败、成功激活、上一代资源离线回退，以及加载壳重试不删除缓存或合成记录。63 项测试、类型检查与生产构建通过。没有访问真实训练数据、空间码或线上服务；浏览器安装与隔离浏览器调用未能完成，因此真实浏览器刷新、安装提示和离线界面本轮未验收。改动尚未部署。
