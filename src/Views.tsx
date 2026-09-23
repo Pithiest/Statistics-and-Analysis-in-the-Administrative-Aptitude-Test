@@ -42,6 +42,7 @@ import type { EntryForm, ModuleName, QuickTemplate, Settings, SyncState, Trainin
 
 const ModuleTrendChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleTrendChart })));
 const SubTypeBarChart = lazy(() => import("./Charts").then((module) => ({ default: module.SubTypeBarChart })));
+const LEDGER_PAGE_SIZE = 50;
 
 export function RecordView(props: {
   form: EntryForm;
@@ -386,6 +387,13 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
   onEdit: (record: TrainingRecord) => void;
   onDelete: (record: TrainingRecord) => void;
 }) {
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [query, module, reason, sort]);
+  const pageCount = Math.max(1, Math.ceil(records.length / LEDGER_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const visibleRecords = records.slice(currentPage * LEDGER_PAGE_SIZE, (currentPage + 1) * LEDGER_PAGE_SIZE);
+  const firstVisible = records.length ? currentPage * LEDGER_PAGE_SIZE + 1 : 0;
+  const lastVisible = Math.min(records.length, (currentPage + 1) * LEDGER_PAGE_SIZE);
   const total = records.reduce((acc, item) => acc + item.total, 0);
   const correct = records.reduce((acc, item) => acc + item.correct, 0);
   const wrong = Math.max(0, total - correct);
@@ -447,7 +455,7 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
               </tr>
             </thead>
             <tbody>
-              {records.map((item) => (
+              {visibleRecords.map((item) => (
                 <tr key={item.id}>
                   <td>{item.date}</td>
                   <td><strong>{item.module}</strong><small>{item.subType}</small></td>
@@ -463,7 +471,7 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
           {!records.length && <Empty text={hasFilter ? "没有找到符合条件的记录，试试放宽筛选。" : "还没有训练记录。完成一组题后，前往「录入」保存本次结果。"} action={hasFilter ? <button className="soft-btn" onClick={clearFilters}>清除筛选</button> : undefined} />}
         </div>
         <div className="mobile-ledger">
-          {records.map((item) => (
+          {visibleRecords.map((item) => (
             <article className="ledger-card" key={item.id}>
               <div>
                 <span>{item.date}</span>
@@ -486,6 +494,14 @@ export function Ledger({ records, query, module, reason, sort, onQuery, onModule
           ))}
           {!records.length && <Empty text={hasFilter ? "没有找到符合条件的记录，试试放宽筛选。" : "还没有训练记录。完成一组题后，前往「录入」保存本次结果。"} action={hasFilter ? <button className="soft-btn" onClick={clearFilters}>清除筛选</button> : undefined} />}
         </div>
+        {records.length > LEDGER_PAGE_SIZE && <div className="ledger-pagination" role="group" aria-label="台账分页">
+          <span>显示 {firstVisible}–{lastVisible} 条，共 {records.length} 条</span>
+          <div className="ledger-page-actions">
+            <button className="soft-btn" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一页</button>
+            <span>{currentPage + 1} / {pageCount}</span>
+            <button className="soft-btn" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>下一页</button>
+          </div>
+        </div>}
       </section>
     </div>
   );

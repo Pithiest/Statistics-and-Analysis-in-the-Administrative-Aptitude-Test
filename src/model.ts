@@ -267,11 +267,11 @@ export function subTypeOptions(module: ModuleName | "", current = "") {
 
 export function moduleSubTypes(records: TrainingRecord[], module: ModuleName) {
   const base = moduleConfig(module)?.subTypes || [];
-  const fromRecords = active(records)
-    .filter((item) => item.module === module)
-    .map((item) => item.subType)
-    .filter(Boolean);
-  return [...new Set([...base, ...fromRecords])];
+  const fromRecords = new Set(base);
+  for (const item of records) {
+    if (!item.deletedAt && item.module === module && item.subType) fromRecords.add(item.subType);
+  }
+  return [...fromRecords];
 }
 
 export function shortName(module: ModuleName | "") {
@@ -317,6 +317,74 @@ export function avgPace(records: TrainingRecord[]) {
   const total=paced.reduce((s,r)=>s+(r.pacedTotal??r.total),0);
   const seconds=paced.reduce((s,r)=>s+(r.paceSecondsTotal??r.duration*60),0);
   return total ? Math.round(seconds/total) : 0;
+}
+
+type RecordSummary = {
+  total: number;
+  correct: number;
+  hasActivity: boolean;
+  pacedTotal: number;
+  paceSeconds: number;
+  lastDate: string;
+  pending: number;
+  reviewable: number;
+  reviewed: number;
+};
+
+function emptyRecordSummary(): RecordSummary {
+  return { total: 0, correct: 0, hasActivity: false, pacedTotal: 0, paceSeconds: 0, lastDate: "", pending: 0, reviewable: 0, reviewed: 0 };
+}
+
+function addRecordToSummary(summary: RecordSummary, item: TrainingRecord) {
+  summary.total += item.total;
+  summary.correct += item.correct;
+  if (item.total > 0) summary.hasActivity = true;
+  const pacedTotal = item.pacedTotal ?? item.total;
+  const paceSeconds = item.paceSecondsTotal ?? item.duration * 60;
+  if (pacedTotal > 0 && paceSeconds > 0) {
+    summary.pacedTotal += pacedTotal;
+    summary.paceSeconds += paceSeconds;
+  }
+  if (item.date > summary.lastDate) summary.lastDate = item.date;
+  if (item.reviewStatus === "pending") summary.pending += 1;
+  if (item.correct < item.total || item.errorReason !== "无") {
+    summary.reviewable += 1;
+    if (item.reviewStatus === "reviewed") summary.reviewed += 1;
+  }
+}
+
+function aggregateRecords(records: TrainingRecord[], key: (item: TrainingRecord) => string) {
+  const groups = new Map<string, RecordSummary>();
+  for (const item of records) {
+    const groupKey = key(item);
+    let summary = groups.get(groupKey);
+    if (!summary) {
+      summary = emptyRecordSummary();
+      groups.set(groupKey, summary);
+    }
+    addRecordToSummary(summary, item);
+  }
+  return groups;
+}
+
+function aggregateRecordSummaries(records: TrainingRecord[]) {
+  const summary = emptyRecordSummary();
+  for (const item of records) addRecordToSummary(summary, item);
+  return summary;
+}
+
+function averagePace(summary: RecordSummary) {
+  return summary.pacedTotal ? Math.round(summary.paceSeconds / summary.pacedTotal) : 0;
+}
+
+function reviewSummaryFromAggregate(summary: RecordSummary) {
+  const pending = summary.reviewable - summary.reviewed;
+  return {
+    total: summary.reviewable,
+    completed: summary.reviewed,
+    pending,
+    completionRate: summary.reviewable ? Math.round((summary.reviewed / summary.reviewable) * 100) : 100
+  };
 }
 
 export function loadState() {
@@ -485,27 +553,41 @@ export function formFromTemplate(form: EntryForm, template: QuickTemplate): Entr
 
 export function dashboard(records: TrainingRecord[], settings: Settings) {
   const rows = active(records);
-  const todayRows = rows.filter((item) => item.date === today());
-  const weekRows = rows.filter((item) => item.date >= daysAgo(6));
-  const previousWeekRows = rows.filter((item) => item.date >= daysAgo(13) && item.date <= daysAgo(7));
-  const total = sum(rows, "total");
-  const correct = sum(rows, "correct");
-  const todayTotal = sum(todayRows, "total");
-  const weekTotal = sum(weekRows, "total");
-  const weekCorrect = sum(weekRows, "correct");
-  const previousWeekTotal = sum(previousWeekRows, "total");
-  const previousWeekCorrect = sum(previousWeekRows, "correct");
+  const byDate = aggregateRecords(rows, (item) => item.date);
+  const byModule = aggregateRecords(rows, (item) => item.module);
+  const totalStats = aggregateRecordSummaries(rows);
+  const todayKey = today();
+  const todayStats = byDate.get(todayKey) || emptyRecordSummary();
+  const weekStart = daysAgo(6);
+  const previousWeekStart = daysAgo(13);
+  const previousWeekEnd = daysAgo(7);
+  let weekTotal = 0;
+  let weekCorrect = 0;
+  let previousWeekTotal = 0;
+  let previousWeekCorrect = 0;
+  for (const [date, summary] of byDate) {
+    if (date >= weekStart) {
+      weekTotal += summary.total;
+      weekCorrect += summary.correct;
+    } else if (date >= previousWeekStart && date <= previousWeekEnd) {
+      previousWeekTotal += summary.total;
+      previousWeekCorrect += summary.correct;
+    }
+  }
+  const total = totalStats.total;
+  const correct = totalStats.correct;
+  const todayTotal = todayStats.total;
   const pending = rows.filter((item) => item.reviewStatus === "pending").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const review = reviewSummary(rows);
+  const review = reviewSummaryFromAggregate(totalStats);
   const moduleStats = MODULES.filter((mod) => mod.name !== "全模块测试").map((mod) => {
-    const scoped = rows.filter((item) => item.module === mod.name);
-    const scopedTotal = sum(scoped, "total");
-    const scopedCorrect = sum(scoped, "correct");
-    const scopedReview = reviewSummary(scoped);
-    const lastDate = latestDate(scoped);
+    const scoped = byModule.get(mod.name) || emptyRecordSummary();
+    const scopedTotal = scoped.total;
+    const scopedCorrect = scoped.correct;
+    const scopedReview = reviewSummaryFromAggregate(scoped);
+    const lastDate = scoped.lastDate;
     const freshness = freshnessScore(lastDate);
     const rate = percent(scopedCorrect, scopedTotal);
-    const pace = avgPace(scoped);
+    const pace = averagePace(scoped);
     return {
       ...mod,
       total: scopedTotal,
@@ -513,7 +595,7 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
       rate,
       pace,
       wrong: scopedTotal - scopedCorrect,
-      pending: scoped.filter((item) => item.reviewStatus === "pending").length,
+      pending: scoped.pending,
       lastDate,
       freshness,
       reviewRate: scopedReview.completionRate,
@@ -538,7 +620,7 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
     correct,
     totalRate: percent(correct, total),
     todayTotal,
-    todayRate: percent(sum(todayRows, "correct"), todayTotal),
+    todayRate: percent(todayStats.correct, todayTotal),
     weekTotal,
     weekRate: percent(weekCorrect, weekTotal),
     comparison: {
@@ -550,14 +632,14 @@ export function dashboard(records: TrainingRecord[], settings: Settings) {
       previousRate: percent(previousWeekCorrect, previousWeekTotal),
       rateDelta: percent(weekCorrect, weekTotal) - percent(previousWeekCorrect, previousWeekTotal)
     },
-    activeDays: new Set(rows.filter((item) => item.total > 0).map((item) => item.date)).size,
+    activeDays: [...byDate.values()].filter((summary) => summary.hasActivity).length,
     streak: trainingStreak(rows),
-    avgPace: avgPace(rows),
+    avgPace: averagePace(totalStats),
     pending,
     review,
     moduleStats,
-    trend: makeTrend(rows, 14),
-    heatmap: makeHeatmap(rows, 35),
+    trend: makeTrend(rows, 14, byDate),
+    heatmap: makeHeatmap(rows, 35, byDate),
     reasons,
     quote: quoteOfDay(),
     weak,
@@ -572,17 +654,21 @@ export function moduleDetail(records: TrainingRecord[], module: ModuleName, sett
   const allModuleRows = active(records).filter((item) => item.module === module);
   const rangedRows = range === "全部" ? allModuleRows : allModuleRows.filter((item) => item.date >= daysAgo(Number(range) - 1));
   const rows = subType === "全部题型" ? rangedRows : rangedRows.filter((item) => item.subType === subType);
-  const total = sum(rows, "total");
-  const correct = sum(rows, "correct");
+  const selectedStats = aggregateRecordSummaries(rows);
+  const total = selectedStats.total;
+  const correct = selectedStats.correct;
   const modulePaceTarget = moduleConfig(module)?.pace || 60;
-  const subTypes = moduleSubTypes(records, module).map((name) => {
-    const scoped = rangedRows.filter((item) => item.subType === name);
-    const scopedTotal = sum(scoped, "total");
-    const scopedCorrect = sum(scoped, "correct");
-    const scopedReview = reviewSummary(scoped);
+  const subTypeNames = new Set(moduleConfig(module)?.subTypes || []);
+  for (const item of allModuleRows) if (item.subType) subTypeNames.add(item.subType);
+  const bySubType = aggregateRecords(rangedRows, (item) => item.subType);
+  const subTypes = [...subTypeNames].map((name) => {
+    const scoped = bySubType.get(name) || emptyRecordSummary();
+    const scopedTotal = scoped.total;
+    const scopedCorrect = scoped.correct;
+    const scopedReview = reviewSummaryFromAggregate(scoped);
     const rate = percent(scopedCorrect, scopedTotal);
-    const pace = avgPace(scoped);
-    const lastDate = latestDate(scoped);
+    const pace = averagePace(scoped);
+    const lastDate = scoped.lastDate;
     const daysSince = lastDate ? daysBetween(lastDate, today()) : null;
     const freshness = freshnessScore(lastDate);
     const health = healthScore({
@@ -603,7 +689,7 @@ export function moduleDetail(records: TrainingRecord[], module: ModuleName, sett
       pace,
       lastDate,
       daysSince,
-      pending: scoped.filter((item) => item.reviewStatus === "pending").length,
+      pending: scoped.pending,
       health,
       risk: subTypeRisk({ total: scopedTotal, rate, pace, paceTarget: modulePaceTarget, daysSince, pending: scopedReview.pending }, settings.targetRate)
     };
@@ -612,8 +698,8 @@ export function moduleDetail(records: TrainingRecord[], module: ModuleName, sett
     .filter((item) => item.total > 0)
     .sort((a, b) => a.health - b.health || a.rate - b.rate || b.wrong - a.wrong)[0];
   const reasons = aggregateWrong(rows, (item) => item.errorReason).filter((item) => item.name !== "无").slice(0, 7);
-  const pending = rows.filter((item) => item.reviewStatus === "pending").length;
-  const pace = avgPace(rows);
+  const pending = selectedStats.pending;
+  const pace = averagePace(selectedStats);
   const actions = [
     total ? `${shortName(module)}累计 ${total} 题，正确率 ${percent(correct, total)}%。` : "这个模块还没有足够样本，先录入一组真实训练。",
     weakest ? `优先看 ${weakest.name}，当前综合风险最高。` : "题型样本还不够，先按原小项补齐记录。",
@@ -765,18 +851,17 @@ function normalizeTemplates(input: unknown): QuickTemplate[] {
     .slice(0, 24) as QuickTemplate[];
 }
 
-function makeTrend(records: TrainingRecord[], days: number) {
+function makeTrend(records: TrainingRecord[], days: number, byDate = aggregateRecords(records, (item) => item.date)) {
   return Array.from({ length: days }, (_, index) => {
     const date = daysAgo(days - index - 1);
-    const scoped = records.filter((item) => item.date === date);
-    const total = sum(scoped, "total");
-    const pace = avgPace(scoped);
+    const summary = byDate.get(date) || emptyRecordSummary();
+    const pace = averagePace(summary);
     return {
       date,
       label: date.slice(5),
-      total,
-      rate: total ? percent(sum(scoped, "correct"), total) : null,
-      pace: total && pace ? pace : null
+      total: summary.total,
+      rate: summary.total ? percent(summary.correct, summary.total) : null,
+      pace: summary.total && pace ? pace : null
     };
   });
 }
@@ -790,10 +875,10 @@ function trendDaysFor(records: TrainingRecord[]) {
   return Math.max(30, Math.min(90, days));
 }
 
-function makeHeatmap(records: TrainingRecord[], days: number) {
+function makeHeatmap(records: TrainingRecord[], days: number, byDate = aggregateRecords(records, (item) => item.date)) {
   return Array.from({ length: days }, (_, index) => {
     const date = daysAgo(days - index - 1);
-    const total = sum(records.filter((item) => item.date === date), "total");
+    const total = byDate.get(date)?.total || 0;
     return { date, total, level: total >= 100 ? 4 : total >= 70 ? 3 : total >= 35 ? 2 : total > 0 ? 1 : 0 };
   });
 }
@@ -819,22 +904,6 @@ function aggregateWrong(records: TrainingRecord[], key: (record: TrainingRecord)
     map.set(name, { name, value: (map.get(name)?.value || 0) + wrong });
   });
   return [...map.values()].sort((a, b) => b.value - a.value);
-}
-
-function reviewSummary(records: TrainingRecord[]) {
-  const reviewable = records.filter((item) => item.correct < item.total || item.errorReason !== "无");
-  const completed = reviewable.filter((item) => item.reviewStatus === "reviewed").length;
-  const pending = reviewable.length - completed;
-  return {
-    total: reviewable.length,
-    completed,
-    pending,
-    completionRate: reviewable.length ? Math.round((completed / reviewable.length) * 100) : 100
-  };
-}
-
-function latestDate(records: TrainingRecord[]) {
-  return records.reduce((latest, item) => (item.date > latest ? item.date : latest), "");
 }
 
 function freshnessScore(lastDate: string) {
@@ -909,12 +978,13 @@ function recommendations(data: {
 
 function trainingCoverage(records: TrainingRecord[], settings: Settings) {
   const rows = active(records);
+  const byModuleSubType = aggregateRecords(rows, (item) => `${item.module}\u0000${item.subType}`);
   const items = MODULES.filter((module) => module.name !== "全模块测试").flatMap((module, moduleIndex) =>
     module.subTypes.map((subType, subIndex) => {
-      const scoped = rows.filter((item) => item.module === module.name && item.subType === subType);
-      const total = sum(scoped, "total");
-      const correct = sum(scoped, "correct");
-      const lastDate = scoped.reduce((latest, item) => (item.date > latest ? item.date : latest), "");
+      const scoped = byModuleSubType.get(`${module.name}\u0000${subType}`) || emptyRecordSummary();
+      const total = scoped.total;
+      const correct = scoped.correct;
+      const lastDate = scoped.lastDate;
       const daysSince = lastDate ? daysBetween(lastDate, today()) : null;
       return {
         key: `${module.id}:${subType}`,
@@ -924,7 +994,7 @@ function trainingCoverage(records: TrainingRecord[], settings: Settings) {
         total,
         correct,
         rate: percent(correct, total),
-        pace: avgPace(scoped),
+        pace: averagePace(scoped),
         lastDate,
         daysSince,
         order: moduleIndex * 100 + subIndex

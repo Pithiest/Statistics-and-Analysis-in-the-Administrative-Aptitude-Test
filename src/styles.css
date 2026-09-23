@@ -784,6 +784,8 @@ td small { display: block; color: var(--muted); margin-top: 3px; line-height: 1.
 td:last-child { white-space: nowrap; }
 .ledger-surface .icon-btn { width: 36px; min-height: 36px; }
 .mobile-ledger { display: none; }
+.ledger-pagination { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
+.ledger-page-actions { display: flex; align-items: center; gap: 10px; }
 .record-list { display: grid; gap: 8px; }
 .record-list.compact .record-card { box-shadow: none; }
 .record-card { min-height: 82px; padding: 12px; border-radius: 9px; display: grid; grid-template-columns: 4px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
@@ -1032,6 +1034,8 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
   .module-list small { grid-column: 1 / -1; text-align: left; }
   .table-wrap { display: none; }
   .mobile-ledger { display: grid; gap: 12px; }
+  .ledger-pagination { align-items: stretch; flex-direction: column; }
+  .ledger-page-actions { justify-content: space-between; }
   .ledger-card { padding: 13px; border-radius: 9px; display: grid; gap: 10px; box-shadow: none; }
   .ledger-card span, .ledger-card small, .ledger-card p { color: var(--muted); margin: 0; line-height: 1.45; }
   .ledger-card strong { display: block; margin: 3px 0; }
