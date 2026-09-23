@@ -139,3 +139,10 @@ test("QR start forwards only a bounded Vercel client IP for upstream rate limiti
   assert.equal((await handleSsoRequest(request("poll", { challenge }), fetcher)).status, 200);
   assert.equal(forwarded.at(-1)?.ip, null);
 });
+
+test("QR rate limits are reported without exposing upstream details", async () => {
+  const response = await handleSsoRequest(request("start", {}), async () => reply({ error: "upstream private detail" }, 429));
+  assert.equal(response.status, 429);
+  assert.deepEqual(await response.json(), { error: "二维码生成较频繁，请十分钟后重试。" });
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+});
