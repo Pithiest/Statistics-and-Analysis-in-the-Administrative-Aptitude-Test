@@ -98,6 +98,7 @@ export function MistakesView(props: {
   const [now, setNow] = useState(() => Date.now());
   const importInput = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const returnFocusIdRef = useRef<string | null>(null);
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 60000);
     return () => window.clearInterval(id);
@@ -124,15 +125,23 @@ export function MistakesView(props: {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
   const selected = notebook.questions.find((q) => q.id === selectedId);
+  useEffect(() => {
+    if (selectedId || !returnFocusIdRef.current) return;
+    const focusId = returnFocusIdRef.current;
+    const launcher = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-question-id]"))
+      .find((button) => button.dataset.questionId === focusId);
+    (launcher || headingRef.current)?.focus();
+    returnFocusIdRef.current = null;
+  }, [selectedId]);
   const clearFilters = () => { setModule(""); setKnowledge(""); setStatus("all"); setSearch(""); setPage(0); };
   const showQuestion = (id: string, ids: string[] = [], position = 0) => {
+    returnFocusIdRef.current = id;
     setSelectedId(id); setSessionIds(ids); setSessionPosition(position); setNotice("");
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
   };
   const updateQuestion = (question: MistakeQuestion) => onChange({ ...notebook, questions: notebook.questions.map((item) => item.id === question.id ? question : item) });
   const returnToList = () => {
     setSelectedId(null); setSessionIds([]); setSessionPosition(0);
-    window.requestAnimationFrame(() => headingRef.current?.focus());
   };
   const beginReview = () => {
     const queue = filtered.map(({ question }) => question).filter((q) => dueNow(q, now))
@@ -209,7 +218,7 @@ export function MistakesView(props: {
       </div>
       {filtered.length ? <>
         <div className="mistake-question-list">
-          {filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map(({ question, preview }, index) => <button type="button" key={question.id} className="mistake-question-row" onClick={() => showQuestion(question.id)}>
+          {filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map(({ question, preview }, index) => <button type="button" key={question.id} data-question-id={question.id} className="mistake-question-row" onClick={() => showQuestion(question.id)}>
             <span className="mistake-question-number">{currentPage * PAGE_SIZE + index + 1}</span>
             <span className="mistake-question-summary">
               <span className="mistake-question-meta"><span>{question.source.module || "未分类"}</span>{question.source.knowledgePoints.slice(0, 2).map((point) => <span key={point}>{point}</span>)}</span>

@@ -1,5 +1,5 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, Suspense, lazy, useEffect, useId, useRef, useState } from "react";
+import type { ReactElement, ReactNode } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -82,6 +82,7 @@ export function RecordView(props: {
   return (
     <div className="stack record-page">
       <section className="form-layout">
+        <form className="record-form" onSubmit={(event) => { event.preventDefault(); props.onSave(); }}>
         <Panel title={props.editing ? "编辑训练" : "录入训练"} note="记下本次结果，让下一组训练更有方向。">
           <fieldset className="entry-section">
             <legend className="entry-section-title">训练信息</legend>
@@ -106,9 +107,9 @@ export function RecordView(props: {
           <div className="form-grid">
             <Field label="题量" hint={totalError} hintId="entry-total-hint" invalid={Boolean(totalError)}><input type="number" inputMode="numeric" min="1" max={MAX_RECORD_TOTAL} step="1" value={form.total} onChange={(event) => setTotal(event.target.value)} placeholder="完成题数" aria-invalid={Boolean(totalError)} aria-describedby={totalError ? "entry-total-hint" : undefined} /></Field>
             <Field label="正确数" hint={correctError} hintId="entry-correct-hint" invalid={Boolean(correctError)}><input type="number" inputMode="numeric" min="0" max={validTotal ? total : MAX_RECORD_TOTAL} step="1" value={form.correct} onChange={(event) => setForm({ ...form, correct: event.target.value })} placeholder="做对几题，全错请填 0" aria-invalid={Boolean(correctError)} aria-describedby={correctError ? "entry-correct-hint" : undefined} /></Field>
-            <Field label="实际用时（分钟）" hint={durationError || "填写真实用时；参考用时仅用于安排训练。"} hintId="entry-duration-hint" invalid={Boolean(durationError)}>
+            <Field label="实际用时（分钟）" inputId="entry-duration-field" hint={durationError || "填写真实用时；参考用时仅用于安排训练。"} hintId="entry-duration-hint" invalid={Boolean(durationError)}>
               <div className="input-action">
-                <input type="number" inputMode="decimal" min="0.1" max={MAX_RECORD_DURATION} step="0.1" value={form.duration} onChange={(event) => setForm({ ...form, duration: event.target.value })} placeholder="例如 15.5" aria-invalid={Boolean(durationError)} aria-describedby="entry-duration-hint" />
+                <input id="entry-duration-field" type="number" inputMode="decimal" min="0.1" max={MAX_RECORD_DURATION} step="0.1" value={form.duration} onChange={(event) => setForm({ ...form, duration: event.target.value })} placeholder="例如 15.5" aria-invalid={Boolean(durationError)} aria-describedby="entry-duration-hint" />
                 <button type="button" className="mini-btn" disabled={!form.module || !validTotal} onClick={useSuggested} title="按模块参考配速和题量估算">参考用时</button>
               </div>
             </Field>
@@ -135,12 +136,13 @@ export function RecordView(props: {
           </fieldset>
           <div className="entry-footer">
             <div className="button-row">
-              <button className="primary-btn" onClick={props.onSave} disabled={!canSave}><Save /> {props.editing ? "保存修改" : "保存训练"}</button>
-              <button className="soft-btn" onClick={props.onSaveContinue} disabled={!canSave}><Plus /> 保存并继续</button>
+              <button type="submit" className="primary-btn" disabled={!canSave}><Save /> {props.editing ? "保存修改" : "保存训练"}</button>
+              <button type="button" className="soft-btn" onClick={props.onSaveContinue} disabled={!canSave}><Plus /> 保存并继续</button>
             </div>
             {!canSave && <small>选择模块、题型并填写完整的训练结果后保存。</small>}
           </div>
         </Panel>
+        </form>
 
         <div className="side-stack">
           <Panel title="训练计时" note="结束后把计时结果填入本次记录">
@@ -618,8 +620,13 @@ function Panel({ title, note, children }: { title: string; note?: string; childr
   return <section className="panel"><div className="panel-head"><div><h3>{title}</h3>{note && <span>{note}</span>}</div></div>{children}</section>;
 }
 
-function Field({ label, children, hint, hintId, invalid = false }: { label: string; children: ReactNode; hint?: string; hintId?: string; invalid?: boolean }) {
-  return <label className="field"><span>{label}</span>{children}{hint && <small id={hintId} className={invalid ? "field-error" : "field-help"}>{hint}</small>}</label>;
+function Field({ label, children, hint, hintId, inputId, invalid = false }: { label: string; children: ReactNode; hint?: string; hintId?: string; inputId?: string; invalid?: boolean }) {
+  const generatedId = useId();
+  const childControl = isValidElement(children) && typeof children.type === "string" && ["input", "select", "textarea"].includes(children.type);
+  const existingId = childControl ? (children.props as { id?: string }).id : undefined;
+  const controlId = inputId || existingId || generatedId;
+  const control = childControl ? cloneElement(children as ReactElement<{ id?: string }>, { id: controlId }) : children;
+  return <div className="field"><label htmlFor={controlId}>{label}</label>{control}{hint && <small id={hintId} className={invalid ? "field-error" : "field-help"} aria-live={invalid ? "polite" : undefined} aria-atomic={invalid || undefined}>{hint}</small>}</div>;
 }
 
 function ChartBox({ children, compact = false }: { children: ReactNode; compact?: boolean }) {

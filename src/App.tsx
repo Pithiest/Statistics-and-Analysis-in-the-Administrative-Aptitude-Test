@@ -112,6 +112,8 @@ export function App() {
   const toastTimerRef = useRef<number>();
   const elapsedMsRef = useRef(0);
   const timerStartedRef = useRef<number | null>(null);
+  const pageHeadingRef = useRef<HTMLHeadingElement>(null);
+  const previousViewRef = useRef(view);
   const navigationVersionRef = useRef(0);
   const reviewVisitedRef = useRef(false);
   const transitionRef = useRef<{ skipTransition: () => void } | null>(null);
@@ -129,6 +131,12 @@ export function App() {
     window.addEventListener("offline", update);
     return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
   }, []);
+
+  useEffect(() => {
+    if (previousViewRef.current === view) return;
+    previousViewRef.current = view;
+    pageHeadingRef.current?.focus({ preventScroll: true });
+  }, [view]);
 
   useEffect(() => {
     let cancelled = false;
@@ -630,7 +638,7 @@ export function App() {
         <header className="topbar">
           <div>
             <p className="workspace-eyebrow"><span>行测数据舱</span><span className="header-date"><CalendarDays />{new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span></p>
-            <h1>{title(view)}</h1>
+            <h1 ref={pageHeadingRef} tabIndex={-1}>{title(view)}</h1>
           </div>
           <div className="top-actions">
             <button className="icon-btn" aria-label={settings.theme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => updateSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark" }, false)} title="切换主题">
