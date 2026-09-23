@@ -12,7 +12,8 @@ test("completed history includes correct and wrong attempts, uses actual seconds
  assert.equal(p.seconds,100);assert.equal(rows.reduce((n,r)=>n+r.total,0),2);assert.equal(rows.reduce((n,r)=>n+r.duration*60,0),100);
  assert.equal(p.answers[0].outcome,"correct");assert.equal(p.answers[1].outcome,"wrong");
  assert.deepEqual([practiceSummary([p]).correctPace,practiceSummary([p]).wrongPace],[40,60]);
- assert.ok(rows.every(r=>r.source==="fenbi"&&r.reviewStatus==="pending"));
+ assert.ok(rows.every(r=>r.source==="fenbi"));
+ assert.deepEqual(rows.map(r=>r.reviewStatus),["reviewed","pending"]);
 });
 test("overlapping knowledge tags do not inflate training totals; missing time is excluded from pace",()=>{
  const f=fixture();const course=(f.report.subReports[1] as any).courseReports[0];course.details[0].children.push({...course.details[0].children[0]});course.courseStat.elapseTime=null;course.details[0].time=null;(f.solution.userAnswers.a as any).time=null;

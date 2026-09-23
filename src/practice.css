@@ -2,3 +2,6 @@
 @media(max-width:1000px){.practice-list{grid-template-columns:repeat(2,minmax(0,1fr))}.practice-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:640px){.practice-source-bar{padding:12px;align-items:flex-start}.practice-source-bar select{max-width:135px}.practice-source-bar span{font-size:10px}.practice-list{grid-template-columns:1fr}.practice-heading{align-items:flex-start;flex-direction:column}.practice-heading h2{font-size:20px}.practice-metric{padding:16px}.practice-metric strong{font-size:24px}.practice-detail-grid{grid-template-columns:1fr}.practice-answer-list{max-height:235px}.practice-footer{align-items:flex-start;flex-direction:column}.practice-filters{gap:6px}.practice-filters button{font-size:12px;padding:8px 12px}.review-tabs{flex-wrap:wrap}.practice-source-bar>div{min-width:0}.practice-source-bar strong{font-size:13px}}
 @media(prefers-reduced-motion:reduce){.practice-card{transition:none}.practice-card:hover{transform:none}}
+.practice-source-bar select { min-height: 44px; }
+.practice-card:focus-visible, .practice-answer:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+@media(max-width:640px){.practice-source-bar{flex-direction:column;align-items:stretch;gap:12px}.practice-source-bar select{width:100%;max-width:none}}

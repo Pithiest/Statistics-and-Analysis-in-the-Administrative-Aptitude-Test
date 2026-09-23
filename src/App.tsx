@@ -71,9 +71,10 @@ export function App() {
   const [hydrated, setHydrated] = useState(false);
   const [openingView, setOpeningView] = useState<ViewId | null>(null);
   const [view, setView] = useState<ViewId>("today");
-  const [reviewTab, setReviewTab] = useState<"questions" | "training" | "practice">("practice");
+  const [reviewTab, setReviewTab] = useState<"questions" | "training" | "practice">("training");
   const fenbi=useFenbiPractice();
   const [statsSource,setStatsSource]=useState<"fenbi"|"manual"|null>(null);
+  const [online, setOnline] = useState(navigator.onLine);
   const [practiceKey,setPracticeKey]=useState<string|null>(null);
   const [records, setRecords] = useState<TrainingRecord[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -108,7 +109,15 @@ export function App() {
   const elapsedMsRef = useRef(0);
   const timerStartedRef = useRef<number | null>(null);
   const navigationVersionRef = useRef(0);
+  const reviewVisitedRef = useRef(false);
   const transitionRef = useRef<{ skipTransition: () => void } | null>(null);
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -272,6 +281,13 @@ export function App() {
     }
   }
 
+  function openReview(tab?: "questions" | "training" | "practice") {
+    if (tab) setReviewTab(tab);
+    else if (!reviewVisitedRef.current) setReviewTab(source === "fenbi" ? "questions" : "training");
+    reviewVisitedRef.current = true;
+    void navigate("review");
+  }
+
   function scheduleSync() {
     changeVersionRef.current += 1;
     dirtyRef.current = true;
@@ -361,7 +377,7 @@ export function App() {
   }
 
   function edit(record: TrainingRecord) {
-    if(record.source==="fenbi"){setPracticeKey(record.sourceKey||null);setReviewTab("practice");navigate("review");return;}
+    if(record.source==="fenbi"){setPracticeKey(record.sourceKey||null);openReview("practice");return;}
     setEditingId(record.id);
     setForm({
       date: record.date,
@@ -492,6 +508,7 @@ export function App() {
             <span>记录 · 诊断 · 复盘</span>
           </div>
         </div>
+        <SubjectSwitch />
         <nav className="side-nav" aria-label="主导航">
           {nav.map((item) => (
             <button
@@ -501,7 +518,7 @@ export function App() {
               aria-busy={openingView === item.id}
               onPointerEnter={() => void preloadView(item.id).catch(() => {})}
               onFocus={() => void preloadView(item.id).catch(() => {})}
-              onClick={() => navigate(item.id)}
+              onClick={() => item.id === "review" ? openReview() : void navigate(item.id)}
             >
               {item.icon}
               <span>{item.label}</span>
@@ -521,6 +538,7 @@ export function App() {
       </aside>
 
       <main className="workspace">
+        <div className="mobile-subject-switch"><SubjectSwitch compact /></div>
         {storageFailures.length > 0 && <div className="notice-banner is-warning" role="alert"><div><strong>本机保存遇到问题</strong><span>{storageFailures.join("、")}目前只留在本次页面，请先导出备份再关闭。</span></div><button className="soft-btn" onClick={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 7, records, settings }, null, 2), "application/json;charset=utf-8")} >导出备份</button></div>}
         {updateReady && <div className="notice-banner" role="status"><div><strong>新版本已就绪</strong><span>保存当前训练后，刷新即可使用。</span></div><button className="soft-btn" onClick={() => window.location.reload()}>刷新使用</button></div>}
         <header className="topbar">
@@ -532,15 +550,15 @@ export function App() {
             <button className="icon-btn" aria-label={settings.theme === "dark" ? "切换浅色主题" : "切换深色主题"} onClick={() => updateSettings({ ...settings, theme: settings.theme === "dark" ? "light" : "dark" }, false)} title="切换主题">
               {settings.theme === "dark" ? <Sun /> : <Moon />}
             </button>
-            <button className="soft-btn" onClick={() => navigate("settings")}>
-              <SyncIcon state={syncState} /> {storageFailures.length ? "保存受限" : syncLabel(syncState)}
+            <button className="icon-btn header-sync" aria-label={`保存状态：${storageFailures.length ? "本机保存受限" : syncLabel(syncState)}，打开设置`} title="查看保存与同步状态" onClick={() => void navigate("settings")}>
+              <SyncIcon state={syncState} />
             </button>
-            {view !== "today" && view !== "record" && <button className="primary-btn" onClick={() => navigate("record")}><Plus /> 录入训练</button>}
+            {view !== "today" && view !== "record" && <button className="primary-btn" onClick={source === "fenbi" ? () => openReview("practice") : () => void navigate("record")}>{source === "fenbi" ? <ListChecks /> : <Plus />}{source === "fenbi" ? "全部练习" : "录入训练"}</button>}
           </div>
         </header>
 
-        {fenbi.session && ["today","diagnosis","ledger","review"].includes(view) && <div className="practice-source-bar"><div><strong>{source==="fenbi"?"粉笔自动记录":"手动训练记录"}</strong><span>{source==="fenbi"?`${fenbi.items.length} 次已完成练习 · ${fenbi.account?.historyComplete?"历史已补齐":"历史正在补齐"}`:"使用当前设备与空间码中的记录"}</span></div><select aria-label="统计数据来源" value={source} onChange={event=>setStatsSource(event.target.value as "fenbi"|"manual")}><option value="fenbi">粉笔自动记录</option><option value="manual">手动训练记录</option></select></div>}
-        {fenbi.error && <div className="notice-banner is-warning" role="status">{fenbi.error}</div>}
+        {fenbi.session && ["today","diagnosis","ledger","review"].includes(view) && <div className="practice-source-bar"><div><strong>{source==="fenbi"?"粉笔自动记录":"手动训练记录"}</strong><span>{source==="fenbi"?`${fenbi.items.length} 次已完成练习 · ${!online ? "离线浏览本机缓存" : fenbi.error ? "同步暂不可用" : fenbi.loading ? "正在检查更新" : fenbi.account?.historyComplete ? "历史已补齐" : fenbi.account ? "历史正在补齐" : "正在读取状态"}`:"使用当前设备与空间码中的记录"}</span></div><select aria-label="统计数据来源" value={source} onChange={event=>setStatsSource(event.target.value as "fenbi"|"manual")}><option value="fenbi">粉笔自动记录</option><option value="manual">手动训练记录</option></select></div>}
+        {fenbi.error && <div className="notice-banner is-warning" role="status"><span>{fenbi.error}</span><button className="soft-btn" onClick={() => void navigate("settings")}>管理账号</button></div>}
         <section key={view} className="page" aria-label={title(view)} aria-busy={!hydrated || openingView !== null}>
           {!hydrated ? <div className="panel route-loading" role="status"><RefreshCw className="spin" />正在恢复本机记录</div> : (
           <Suspense fallback={<div className="panel route-loading"><RefreshCw className="spin" /> 正在打开页面</div>}>
@@ -548,8 +566,10 @@ export function App() {
               <Today
                 data={data}
                 settings={settings}
+                source={source}
                 onRecord={() => navigate("record")}
-                onReview={() => { setReviewTab("training"); navigate("review"); }}
+                onPractice={() => openReview("practice")}
+                onReview={() => openReview("training")}
                 onDiagnose={(module) => {
                   setDiagnosisModule(module);
                   setDiagnosisSub("全部题型");
@@ -594,12 +614,12 @@ export function App() {
               />
             )}
             {view === "review" && <div className="stack">
-              <div className="review-tabs" role="tablist" aria-label="复盘类型">
-                <button role="tab" aria-selected={reviewTab === "practice"} className={reviewTab === "practice"?"active":""} onClick={()=>setReviewTab("practice")}>全部练习{fenbi.items.length?` · ${fenbi.items.length}`:""}</button>
-                <button role="tab" aria-selected={reviewTab === "questions"} className={reviewTab === "questions" ? "active" : ""} onClick={() => setReviewTab("questions")}>粉笔错题本</button>
-                <button role="tab" aria-selected={reviewTab === "training"} className={reviewTab === "training" ? "active" : ""} onClick={() => setReviewTab("training")}>训练复盘{data.pending.length ? ` · ${data.pending.length}` : ""}</button>
+              <div className="review-tabs" role="group" aria-label="复盘类型">
+                <button aria-pressed={reviewTab === "questions"} className={reviewTab === "questions" ? "active" : ""} onClick={() => setReviewTab("questions")}>粉笔错题本</button>
+                <button aria-pressed={reviewTab === "training"} className={reviewTab === "training" ? "active" : ""} onClick={() => setReviewTab("training")}>训练复盘{data.pending.length ? ` · ${data.pending.length}` : ""}</button>
+                <button aria-pressed={reviewTab === "practice"} className={reviewTab === "practice"?"active":""} onClick={() => setReviewTab("practice")}>全部练习{fenbi.items.length?` · ${fenbi.items.length}`:""}</button>
               </div>
-              {reviewTab === "questions" ? <div id="fenbi-review-slot" /> : reviewTab==="practice" ? <PracticeRoute items={fenbi.items} session={fenbi.session} account={fenbi.account} selectedKey={practiceKey} onSelect={setPracticeKey} onSettings={()=>navigate("settings")} onReview={fenbi.markReviewed} /> : <ReviewRoute records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
+              {reviewTab === "questions" ? <div id="fenbi-review-slot" /> : reviewTab==="practice" ? <PracticeRoute items={fenbi.items} session={fenbi.session} account={fenbi.account} online={online} accountError={Boolean(fenbi.error)} selectedKey={practiceKey} onSelect={setPracticeKey} onSettings={()=>navigate("settings")} onReview={fenbi.markReviewed} /> : <ReviewRoute records={data.pending} onDone={markReviewed} onEdit={edit} onDelete={softDelete} />}
             </div>}
             {view === "ledger" && (
               <LedgerRoute
@@ -666,7 +686,7 @@ export function App() {
             aria-busy={openingView === item.id}
             onPointerEnter={() => void preloadView(item.id).catch(() => {})}
             onFocus={() => void preloadView(item.id).catch(() => {})}
-            onClick={() => navigate(item.id)}
+            onClick={() => item.id === "review" ? openReview() : void navigate(item.id)}
           >
             {item.icon}
             <span>{item.label}</span>
@@ -679,16 +699,33 @@ export function App() {
   );
 }
 
+function SubjectSwitch({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={compact ? "subject-switch is-compact" : "subject-switch"} role="group" aria-label="学习科目">
+      {!compact && <span className="subject-switch-label">学习科目</span>}
+      <div className="subject-switch-options">
+        <span className="is-current" aria-current="page">行测</span>
+        <a href="https://gz.pithiest.cn/" aria-label="前往公专训练网站">公专 <ArrowRight /></a>
+      </div>
+      <small>两科目记录各自保存</small>
+    </div>
+  );
+}
+
 function Today({
   data,
   settings,
+  source,
   onRecord,
+  onPractice,
   onReview,
   onDiagnose
 }: {
   data: ReturnType<typeof dashboard>;
   settings: Settings;
+  source: "fenbi" | "manual";
   onRecord: () => void;
+  onPractice: () => void;
   onReview: () => void;
   onDiagnose: (module: ModuleName) => void;
 }) {
@@ -698,14 +735,23 @@ function Today({
   const leadPlan = data.coverage.nextPlan[0] || data.recommendations[0] || "先补一组真实训练，系统会继续更新下一步计划。";
   const topUndertrained = data.coverage.undertrained[0];
   const topStale = data.coverage.stale[0];
-  const heroTitle = !data.total
+  const isFenbi = source === "fenbi";
+  const heroTitle = isFenbi && !data.total
+    ? "还没有同步到已完成练习"
+    : isFenbi && !data.todayTotal
+      ? "今天尚无已同步练习"
+    : !data.total
     ? "从第一组训练开始"
     : !data.todayTotal
       ? "今天还没记录训练"
     : remaining
       ? `今天还差 ${remaining} 题`
       : "今日题量已达标";
-  const heroDetail = !data.total
+  const heroDetail = isFenbi && !data.total
+    ? "完成粉笔练习后，可到全部练习查看同步结果。"
+    : isFenbi && !data.todayTotal
+      ? "当前练习档案里还没有今天的记录；可查看最近练习与同步状态。"
+    : !data.total
     ? "记录题量、用时和错因，让下一次练习更有方向。"
     : !data.todayTotal
       ? `近 7 天 ${data.weekTotal} 题，当前弱项 ${data.weak?.short || "待判断"}，先把今天的第一组样本补上。`
@@ -721,8 +767,8 @@ function Today({
             <h2>{heroTitle}</h2>
             <span>{heroDetail}</span>
             <div className="command-actions">
-            <button className="primary-btn" onClick={onRecord}><Plus /> {data.total ? "录入训练" : "记录第一组"}<ArrowRight /></button>
-            {data.pending.length > 0 && <button className="soft-btn" onClick={onReview}><ListChecks /> 复盘 {data.pending.length} 条</button>}
+            <button className="primary-btn" onClick={isFenbi ? onPractice : onRecord}>{isFenbi ? <ListChecks /> : <Plus />} {isFenbi ? "查看全部练习" : data.total ? "录入训练" : "记录第一组"}<ArrowRight /></button>
+            {data.pending.length > 0 && <button className="soft-btn" onClick={onReview}><CheckCircle2 /> 训练复盘 {data.pending.length} 条</button>}
             </div>
           </div>
           <div className="daily-progress" aria-label={`今日已完成 ${data.todayTotal} 题，目标 ${settings.dailyGoal} 题`}>
@@ -784,7 +830,7 @@ function Today({
             <p className="daily-quote">{data.quote}</p>
           </aside>
         </div> : <div className="getting-started">
-          <div><span>01</span><div><strong>记录一组</strong><p>题量、正确数、用时</p></div><Plus /></div>
+          <div><span>01</span><div><strong>{isFenbi ? "查看练习档案" : "记录一组"}</strong><p>{isFenbi ? "已完成练习自动归档" : "题量、正确数、用时"}</p></div>{isFenbi ? <ListChecks /> : <Plus />}</div>
           <div><span>02</span><div><strong>找到薄弱点</strong><p>按模块和题型查看诊断</p></div><BarChart3 /></div>
           <div><span>03</span><div><strong>复盘再练</strong><p>把错因变成下一步行动</p></div><ListChecks /></div>
         </div>}

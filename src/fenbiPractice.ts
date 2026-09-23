@@ -68,7 +68,7 @@ export function normalizePractice(history: any, report: any, solution: any): Fen
 export function practiceRecords(practices: FenbiPractice[]): TrainingRecord[] {
   return practices.flatMap(p=>p.groups.map((g,i)=>({
     id:`fenbi:${p.key}:${i}`, date:p.date,module:g.module,subType:g.name,total:g.total,correct:g.correct,duration:g.seconds===null?0:g.seconds/60,pacedTotal:g.pacedTotal,paceSecondsTotal:g.pacedSeconds,
-    errorReason:"无",tags:["粉笔自动同步"],note:p.title,reviewStatus:p.reviewedAt||p.correct===p.total?"reviewed" as const:"pending" as const,
+    errorReason:"无",tags:["粉笔自动同步"],note:p.title,reviewStatus:p.reviewedAt||g.correct===g.total?"reviewed" as const:"pending" as const,
     reviewedAt:p.reviewedAt||null,createdAt:p.submittedAt,updatedAt:p.submittedAt,deletedAt:null,
     source:"fenbi" as const,sourceKey:p.key
   })));
