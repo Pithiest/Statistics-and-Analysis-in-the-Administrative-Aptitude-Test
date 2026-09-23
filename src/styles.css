@@ -863,6 +863,10 @@ td:last-child { white-space: nowrap; }
 .notice-banner span { color: var(--muted); margin-top: 4px; line-height: 1.6; }
 .notice-banner .soft-btn { white-space: nowrap; font-size: 12px; }
 .notice-banner.is-warning { border-left-color: var(--amber); }
+.shared-identity-notice { flex-wrap: wrap; }
+.shared-identity-notice > div:first-child { min-width: min(100%, 270px); flex: 1 1 270px; }
+.shared-identity-notice .button-row { flex: 0 1 auto; }
+@media (max-width: 640px) { .shared-identity-notice .button-row { width: 100%; } }
 .toast-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: #91b7ff; }
 /* Shared interaction and content hierarchy. */
 h1, h2, h3, strong { font-weight: 650; }

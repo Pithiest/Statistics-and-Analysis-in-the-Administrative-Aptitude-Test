@@ -3,6 +3,7 @@ import type { FenbiBrowserExtras } from "./fenbiDevice";
 
 const CLOUD_URL = "https://atwsraivphybkfmyeubd.supabase.co/functions/v1/fenbi-cloud";
 export const FENBI_SESSION_KEY = "pithiest-xingce-fenbi-session-v1";
+let sessionPaused = false;
 export type FenbiAccount = {
   historyUpdatedAt?: string | null;
   historyComplete?: boolean;
@@ -41,6 +42,7 @@ export function isFenbiSession(value: unknown): value is FenbiSession {
 }
 
 export function readFenbiSession(): FenbiSession | null {
+  if (sessionPaused) return null;
   try {
     const raw = JSON.parse(localStorage.getItem(FENBI_SESSION_KEY) || "null") as unknown;
     return isFenbiSession(raw) ? { token: raw.token, accountId: raw.accountId } : null;
@@ -51,9 +53,16 @@ export function storeFenbiSession(session: FenbiSession | null): boolean {
   try {
     if (session) localStorage.setItem(FENBI_SESSION_KEY, JSON.stringify(session));
     else localStorage.removeItem(FENBI_SESSION_KEY);
+    sessionPaused = false;
     window.dispatchEvent(new Event("fenbi-session-change"));
     return true;
   } catch { return false; }
+}
+
+/** Hide an unresolved account and abort its page requests without destroying its saved session. */
+export function pauseFenbiSession(): void {
+  sessionPaused = true;
+  window.dispatchEvent(new Event("fenbi-session-change"));
 }
 
 export function mistakeErrorMessage(error: unknown): string {
