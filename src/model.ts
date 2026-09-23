@@ -644,7 +644,7 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
   const subType = normalizeSubType(subTypeText, module);
   const createdAt = validIso(String(item.createdAt || item.created_at || ""), `${date}T00:00:00.000Z`);
   const updatedAt = validIso(String(item.updatedAt || item.updated_at || ""), createdAt);
-  const id = String(item.id || "").trim() || stableLegacyId({ date, module, subType, total, correct, duration, errorReason, tags: item.tags, note: noteText });
+  const id = String(item.id || "").trim() || stableLegacyId({ date, createdAt, module, subType, total, correct, duration, errorReason, tags: item.tags, note: noteText });
   const wrong = Math.max(0, total - correct);
   const reviewed = item.reviewStatus === "reviewed" || item.review_status === "reviewed";
   return {
