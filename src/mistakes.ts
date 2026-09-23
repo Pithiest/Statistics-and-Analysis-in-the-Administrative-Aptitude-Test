@@ -336,6 +336,8 @@ export function parseMistakeImport(json: string, existing: MistakeNotebook = emp
   if (json.length > MAX_JSON_SIZE) throw new Error("文件超过错题本导入限制，请分批导出。");
   let raw: unknown;
   try { raw = JSON.parse(json); } catch { throw new Error("文件不是有效的 JSON，原错题本已保留。"); }
+  if ("records" in object(raw) || "settings" in object(raw)) throw new Error("这是训练备份，请到「设置 → 数据备份」导入；错题本未改动。");
+  if ("practices" in object(raw)) throw new Error("这是粉笔练习记录文件，请到「复盘 → 全部练习」查看；错题本未改动。");
   if (Array.isArray(object(raw).batches)) return importFenbiExport(raw, existing, now);
   const incoming = normalizeMistakeNotebook(raw);
   const notebook = mergeMistakeNotebooks(existing, incoming);

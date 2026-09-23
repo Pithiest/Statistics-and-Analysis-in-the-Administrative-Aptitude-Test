@@ -29,6 +29,7 @@ import {
   createRecord,
   dashboard,
   exportCsv,
+  exportTrainingBackup,
   formFromTemplate,
   generateCode,
   loadState,
@@ -41,6 +42,8 @@ import {
   saveRecords,
   saveSettings,
   saveSpaceCode,
+  MAX_TRAINING_BACKUP_SIZE,
+  restoreTrainingBackup,
   stampSettings,
   templateFromForm,
   today
@@ -519,22 +522,24 @@ export function App() {
 
   function importBackup(file?: File) {
     if (!file) return;
+    if (file.size > MAX_TRAINING_BACKUP_SIZE) {
+      notify("训练备份超过 40 MB，请选择较小的 JSON 文件；现有数据未改动。");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(reader.result || "{}"));
-        const imported = normalizeRecords(Array.isArray(parsed) ? parsed : parsed.records);
-        const hasSettings = Boolean(parsed.settings && typeof parsed.settings === "object");
-        if (!imported.length && !hasSettings) throw new Error("empty");
-        if (imported.length) setRecords((list) => normalizeRecords([...imported, ...list]));
-        if (hasSettings) setSettings(stampSettings(normalizeSettings({ ...settingsRef.current, ...parsed.settings })));
+        const restored = restoreTrainingBackup(String(reader.result || ""), recordsRef.current, settingsRef.current);
+        const nextSettings = restored.importedSettings ? stampSettings(restored.settings) : restored.settings;
+        if (restored.importedRecordCount) setRecords(restored.records);
+        if (restored.importedSettings) setSettings(nextSettings);
         scheduleSync();
-        notify(imported.length ? `已导入 ${imported.length} 条记录。` : "已导入设置。");
+        notify(restored.importedRecordCount ? `已导入 ${restored.importedRecordCount} 条训练记录。` : "已导入训练设置。");
       } catch (error) {
-        console.error(error);
-        notify("导入失败，请检查 JSON 备份文件。");
+        notify(error instanceof Error ? error.message : "训练备份导入失败；现有数据未改动。");
       }
     };
+    reader.onerror = () => notify("训练备份文件读取失败；现有数据未改动，请重新选择文件。");
     reader.readAsText(file, "utf-8");
   }
 
@@ -543,8 +548,10 @@ export function App() {
     const link = document.createElement("a");
     link.href = url;
     link.download = name;
+    document.body.append(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function fillDurationFromTimer() {
@@ -617,7 +624,7 @@ export function App() {
 
       <main className="workspace">
         <div className="mobile-subject-switch"><SubjectSwitch compact /></div>
-        {storageFailures.length > 0 && <div className="notice-banner is-warning" role="alert"><div><strong>本机保存遇到问题</strong><span>{storageFailures.join("、")}目前只留在本次页面，请先导出备份再关闭。</span></div><button className="soft-btn" onClick={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 7, records, settings }, null, 2), "application/json;charset=utf-8")} >导出备份</button></div>}
+        {storageFailures.length > 0 && <div className="notice-banner is-warning" role="alert"><div><strong>本机保存遇到问题</strong><span>{storageFailures.join("、")}目前只留在本次页面，请先导出备份再关闭。</span></div><button className="soft-btn" onClick={() => download(`xingce-training-backup-${today()}.json`, exportTrainingBackup(records, settings), "application/json;charset=utf-8")} >导出训练备份</button></div>}
         {updateReady && <div className="notice-banner" role="status"><div><strong>新版本已就绪</strong><span>保存当前训练后，刷新即可使用。</span></div><button className="soft-btn" onClick={() => window.location.reload()}>刷新使用</button></div>}
         <div id="shared-identity-slot" />
         <header className="topbar">
@@ -742,7 +749,7 @@ export function App() {
                   if (applySpaceCode("")) setSyncState("local");
                   setLastSync("");
                 }}
-                onExportJson={() => download(`xingce-backup-${today()}.json`, JSON.stringify({ version: 7, records, settings }, null, 2), "application/json;charset=utf-8")}
+                onExportJson={() => download(`xingce-training-backup-${today()}.json`, exportTrainingBackup(records, settings), "application/json;charset=utf-8")}
                 onExportCsv={() => download(`xingce-ledger-${today()}.csv`, exportCsv(data.rows), "text/csv;charset=utf-8")}
                 onImport={importBackup}
               />

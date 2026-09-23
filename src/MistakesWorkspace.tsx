@@ -42,7 +42,7 @@ function downloadNotebook(notebook: MistakeNotebook) {
   const url = URL.createObjectURL(new Blob([exportMistakeNotebook(notebook)], { type: "application/json" }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = `xingce-mistakes-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `xingce-mistakes-backup-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.append(link); link.click(); link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -234,7 +234,7 @@ function AnonymousNotebook({ message, onLogin, mode,onSettings,portal }: { messa
       if (!alive.current) return;
       local.commit(mergeMistakeNotebooks(local.notebookRef.current, result.notebook)); setImportError("");
       setImportNotice(`已导入：新增 ${result.summary.added} 题，更新 ${result.summary.updated} 题。这份错题本仅保存在当前浏览器，登录后不会自动混入任何账号。`);
-    } catch { if (alive.current) setImportError("文件未能导入，请选择插件导出或本网站备份的错题 JSON，且不超过 40 MB。"); }
+    } catch (error) { if (alive.current) setImportError(error instanceof Error ? error.message : "错题本备份导入失败，原错题本已保留。"); }
   };
   const connection = <div className="stack">
     {mode==="settings" ? <LoginPanel onLogin={onLogin} message={message} /> : <div className="notice-banner"><span>在设置连接粉笔账号，自动同步全部练习与错题。</span><button className="soft-btn" onClick={onSettings}>前往设置</button></div>}
@@ -488,7 +488,7 @@ function AccountNotebook({ session, onExpired, onLogout, onReconnect,logoutBusy,
   const changeNotebook = (next: MistakeNotebook) => { local.commit(next); scheduleProgress(); };
   const importFile = async (file: File) => {
     try { const result = await parseFile(file, local.notebookRef.current); if (valid()) { setPendingImport(result); setCloudError(""); } }
-    catch { if (valid()) setCloudError("文件未能导入，请选择插件导出或本网站备份的错题 JSON，且不超过 40 MB。"); }
+    catch (error) { if (valid()) setCloudError(error instanceof Error ? error.message : "错题本备份导入失败，原错题本已保留。"); }
   };
   const confirmImport = () => {
     if (!pendingImport) return;

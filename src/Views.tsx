@@ -541,12 +541,12 @@ export function SettingsView({ settings, setSettings, spaceCode, setSpaceCode, s
 
       <div id="fenbi-settings-slot" />
       <section className="grid-two">
-        <Panel title="数据备份" note="为训练记录留一份可带走的副本。">
-          <p className="settings-description">JSON 备份手动训练与设置；CSV 导出当前选中的统计来源。粉笔完整练习可在「复盘 → 全部练习」单独导出。</p>
+        <Panel title="数据备份" note="训练记录与错题本分别备份，恢复时选择对应文件。">
+          <p className="settings-description">训练备份 JSON 只含手动训练与设置，不含粉笔错题本。错题本备份请到「复盘 → 粉笔错题本」导入或导出；CSV 导出当前选中的统计来源。</p>
           <div className="button-row">
-            <button className="soft-btn" onClick={onExportJson}><Download /> 导出 JSON</button>
+            <button className="soft-btn" onClick={onExportJson}><Download /> 导出训练备份</button>
             <button className="soft-btn" onClick={onExportCsv}><Download /> 导出 CSV</button>
-            <label className="soft-btn file-btn"><Upload /> 导入 JSON<input type="file" accept="application/json,.json" aria-label="导入 JSON 备份文件" onChange={(event) => { onImport(event.target.files?.[0]); event.target.value = ""; }} /></label>
+            <label className="soft-btn file-btn"><Upload /> 导入训练备份<input type="file" accept="application/json,.json" aria-label="导入训练备份 JSON 文件" onChange={(event) => { onImport(event.target.files?.[0]); event.target.value = ""; }} /></label>
           </div>
         </Panel>
         <Panel title="关于">

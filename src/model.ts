@@ -75,6 +75,7 @@ export type ModuleConfig = {
 
 export const MAX_RECORD_TOTAL = 1000;
 export const MAX_RECORD_DURATION = 1440;
+export const MAX_TRAINING_BACKUP_SIZE = 40_000_000;
 
 export const MODULES: ModuleConfig[] = [
   {
@@ -352,6 +353,66 @@ export function normalizeRecords(input: unknown): TrainingRecord[] {
   return [...map.values()].sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
+export function exportTrainingBackup(records: TrainingRecord[], settings: Settings) {
+  return JSON.stringify({ version: 7, records: normalizeRecords(records), settings: normalizeSettings(settings) }, null, 2);
+}
+
+export function restoreTrainingBackup(json: string, currentRecords: TrainingRecord[], currentSettings: Settings) {
+  const imported = parseTrainingBackup(json);
+  return {
+    records: imported.records.length ? normalizeRecords([...imported.records, ...currentRecords]) : currentRecords,
+    settings: imported.settings ? normalizeSettings({ ...currentSettings, ...imported.settings }) : currentSettings,
+    importedRecordCount: imported.records.length,
+    importedSettings: Boolean(imported.settings)
+  };
+}
+
+function parseTrainingBackup(json: string): { records: TrainingRecord[]; settings?: Record<string, unknown> } {
+  if (json.length > MAX_TRAINING_BACKUP_SIZE) throw new Error("训练备份超过 40 MB，请选择较小的 JSON 文件；现有数据未改动。");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json.replace(/^\uFEFF/, ""));
+  } catch {
+    throw new Error("文件不是有效的 JSON；现有训练数据未改动。");
+  }
+
+  if (Array.isArray(parsed)) {
+    const records = normalizeBackupRecords(parsed);
+    if (!records.length) throw new Error("这份文件没有可恢复的训练记录；现有数据未改动。");
+    return { records };
+  }
+  if (!isPlainObject(parsed)) throw new Error("未识别为训练备份；现有训练数据未改动。");
+  if ("questions" in parsed || "batches" in parsed) {
+    throw new Error("这是错题本备份，请到「复盘 → 粉笔错题本」导入；现有训练数据未改动。");
+  }
+  if ("practices" in parsed) {
+    throw new Error("这是粉笔练习记录文件，请到「复盘 → 全部练习」查看；现有训练数据未改动。");
+  }
+
+  const hasRecords = Object.prototype.hasOwnProperty.call(parsed, "records");
+  const hasSettings = Object.prototype.hasOwnProperty.call(parsed, "settings");
+  if (hasRecords && !Array.isArray(parsed.records)) {
+    throw new Error("训练备份中的记录列表已损坏；现有训练数据未改动。");
+  }
+  if (hasSettings && !isPlainObject(parsed.settings)) {
+    throw new Error("训练备份中的设置已损坏；现有训练数据未改动。");
+  }
+  if (!hasRecords && !hasSettings) throw new Error("未识别为训练备份；现有训练数据未改动。");
+
+  const records = hasRecords ? normalizeBackupRecords(parsed.records as unknown[]) : [];
+  const settings = hasSettings ? parsed.settings as Record<string, unknown> : undefined;
+  if (!records.length && !settings) throw new Error("这份文件没有可恢复的训练数据；现有数据未改动。");
+  return { records, settings };
+}
+
+function normalizeBackupRecords(input: unknown[]) {
+  const normalized = input.map(normalizeRecord);
+  if (normalized.some((record) => record === null)) {
+    throw new Error("训练备份中有无法识别或日期损坏的记录；现有数据未改动。");
+  }
+  return normalizeRecords(normalized as TrainingRecord[]);
+}
+
 export function normalizeSettings(input: unknown): Settings {
   const raw = (input || {}) as Partial<Settings>;
   return {
@@ -606,8 +667,15 @@ export function exportCsv(records: TrainingRecord[]) {
     item.tags.join(" "),
     item.note
   ])]
-    .map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
+    .map((row) => row.map(csvCell).join(","))
     .join("\n");
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? "");
+  const formulaLike = /^[\s\uFEFF]*[=+\-@]/u.test(text) && !/^-[0-9]+(?:\.[0-9]+)?$/.test(text);
+  const safeText = formulaLike ? `'${text}` : text;
+  return `"${safeText.replace(/"/g, '""')}"`;
 }
 
 function normalizeRecord(raw: unknown): TrainingRecord | null {
@@ -623,8 +691,15 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
     created_at?: string;
     updated_at?: string;
     wrong?: number;
+    category?: string;
+    subject?: string;
+    module_name?: string;
+    moduleId?: string;
+    trainingDate?: string;
+    training_date?: string;
+    day?: string;
   };
-  const moduleText = String(item.module || "");
+  const moduleText = String(item.module || item.category || item.subject || item.module_name || item.moduleId || "");
   const subTypeText = String(item.subType || item.sub_type || item.sub || "");
   const noteText = String(item.note || "");
   let module = normalizeModule(moduleText);
@@ -638,10 +713,13 @@ function normalizeRecord(raw: unknown): TrainingRecord | null {
   if (!Number.isFinite(Number(item.correct)) && Number.isFinite(Number(item.wrong))) correct = Math.max(0, total - Number(item.wrong));
   const duration = Math.round((Number(item.duration) || 0) * 10) / 10;
   if (!total || correct > total) return null;
-  const date = validDate(String(item.date || ""), today());
+  const dateValue = [item.date, item.trainingDate, item.training_date, item.day].find((value) => value != null && String(value).trim() !== "");
+  const createdAtValue = String(item.createdAt || item.created_at || "");
+  const date = dateValue == null ? normalizeRecordDate(createdAtValue, "") : normalizeRecordDate(dateValue, "");
+  if (!date) return null;
   const errorReason = normalizeReason(String(item.errorReason || item.error_reason || item.reason || "无"));
   const subType = normalizeSubType(subTypeText, module);
-  const createdAt = validIso(String(item.createdAt || item.created_at || ""), `${date}T00:00:00.000Z`);
+  const createdAt = validIso(createdAtValue, `${date}T00:00:00.000Z`);
   const updatedAt = validIso(String(item.updatedAt || item.updated_at || ""), createdAt);
   const id = String(item.id || "").trim() || stableLegacyId({ date, createdAt, module, subType, total, correct, duration, errorReason, tags: item.tags, note: noteText });
   const wrong = Math.max(0, total - correct);
@@ -1062,6 +1140,24 @@ function normalizeTags(value: unknown) {
 
 function validDate(value: string, fallback: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+}
+
+function normalizeRecordDate(value: unknown, fallback: string) {
+  if (value == null || String(value).trim() === "") return fallback;
+  const match = String(value).trim().match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日)?(?:$|[T\s])/);
+  if (!match) return "";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12) return "";
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (day < 1 || day > monthDays[month - 1]) return "";
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function validIso(value: string, fallback: string) {
