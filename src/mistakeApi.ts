@@ -3,6 +3,7 @@ import type { FenbiBrowserExtras } from "./fenbiDevice";
 
 const CLOUD_URL = "https://atwsraivphybkfmyeubd.supabase.co/functions/v1/fenbi-cloud";
 export const FENBI_SESSION_KEY = "pithiest-xingce-fenbi-session-v1";
+const FENBI_CONFLICT_KEY = "pithiest-xingce-fenbi-conflict-v1";
 let sessionPaused = false;
 export type FenbiAccount = {
   historyUpdatedAt?: string | null;
@@ -41,18 +42,26 @@ export function isFenbiSession(value: unknown): value is FenbiSession {
     && typeof candidate.accountId === "string" && candidate.accountId.length > 0 && candidate.accountId.length < 200;
 }
 
-export function readFenbiSession(): FenbiSession | null {
-  if (sessionPaused) return null;
+export function hasPendingFenbiConflict(): boolean {
+  try { return sessionStorage.getItem(FENBI_CONFLICT_KEY) === "1"; } catch { return false; }
+}
+
+export function readStoredFenbiSession(): FenbiSession | null {
   try {
     const raw = JSON.parse(localStorage.getItem(FENBI_SESSION_KEY) || "null") as unknown;
     return isFenbiSession(raw) ? { token: raw.token, accountId: raw.accountId } : null;
   } catch { return null; }
 }
 
+export function readFenbiSession(): FenbiSession | null {
+  return sessionPaused || hasPendingFenbiConflict() ? null : readStoredFenbiSession();
+}
+
 export function storeFenbiSession(session: FenbiSession | null): boolean {
   try {
     if (session) localStorage.setItem(FENBI_SESSION_KEY, JSON.stringify(session));
     else localStorage.removeItem(FENBI_SESSION_KEY);
+    if (hasPendingFenbiConflict()) sessionStorage.removeItem(FENBI_CONFLICT_KEY);
     sessionPaused = false;
     window.dispatchEvent(new Event("fenbi-session-change"));
     return true;
@@ -60,9 +69,17 @@ export function storeFenbiSession(session: FenbiSession | null): boolean {
 }
 
 /** Hide an unresolved account and abort its page requests without destroying its saved session. */
-export function pauseFenbiSession(): void {
+export function pauseFenbiSession(): boolean {
   sessionPaused = true;
+  let persisted = true;
+  try { sessionStorage.setItem(FENBI_CONFLICT_KEY, "1"); }
+  catch {
+    persisted = false;
+    // If the pause cannot survive reload, discard this browser's old capability.
+    try { localStorage.removeItem(FENBI_SESSION_KEY); } catch { /* Warn the user below. */ }
+  }
   window.dispatchEvent(new Event("fenbi-session-change"));
+  return persisted;
 }
 
 export function mistakeErrorMessage(error: unknown): string {

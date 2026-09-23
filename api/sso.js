@@ -32,6 +32,17 @@ function readCookie(request) {
   const token = matches[0].slice(COOKIE.length + 1);
   return TOKEN.test(token) ? token : null;
 }
+function vercelClientIp(request) {
+  const raw = request.headers.get("x-vercel-forwarded-for");
+  if (!raw || raw.length > 45 || /[,\s%]/.test(raw)) return null;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(raw))
+    return raw.split(".").every(part => Number(part) <= 255) ? raw : null;
+  if (!raw.includes(":")) return null;
+  try {
+    const hostname = new URL(`http://[${raw}]/`).hostname;
+    return hostname.startsWith("[") && hostname.endsWith("]") ? raw : null;
+  } catch { return null; }
+}
 async function readBody(request) {
   const type = request.headers.get("content-type") || "";
   if (!/^application\/json(?:\s*;|$)/i.test(type)) return null;
@@ -65,6 +76,7 @@ async function callUpstream(path, options, fetchImpl, signal) {
       Accept: "application/json",
       "Content-Type": "application/json",
       ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      ...(options.clientIp ? { "X-Forwarded-For": options.clientIp } : {}),
     },
     body: JSON.stringify(options.body || {}),
     cache: "no-store",
@@ -113,7 +125,7 @@ export async function handleSsoRequest(request, fetchImpl = fetch) {
     const body = await readBody(request);
     if (!body) return json({ error: "请求格式不正确。" }, 400);
     if (path === "start" && Object.keys(body).length === 0) {
-      const result = await callUpstream("/login/start", { body }, fetchImpl, request.signal);
+      const result = await callUpstream("/login/start", { body, clientIp: vercelClientIp(request) }, fetchImpl, request.signal);
       const challenge = result.data;
       if (result.status !== 200 || !CHALLENGE.test(challenge?.challenge || "") || typeof challenge.codeContent !== "string" || challenge.codeContent.length > 20_000)
         return json({ error: "暂时无法生成登录二维码。" }, 503);

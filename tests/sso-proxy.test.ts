@@ -94,3 +94,30 @@ test("expired shared session clears its cookie without returning an XC token", a
   assert.match(response.headers.get("Set-Cookie") || "", /Max-Age=0/);
   assert.ok(!(await response.text()).includes(xcToken));
 });
+
+test("QR start forwards only a bounded Vercel client IP for upstream rate limiting", async () => {
+  const forwarded: Array<{ path: string; ip: string | null; origin: string | null; cookie: string | null; auth: string | null }> = [];
+  const fetcher = async (target: string, options: RequestInit) => {
+    const headers = new Headers(options.headers);
+    forwarded.push({ path: new URL(target).pathname, ip: headers.get("x-forwarded-for"), origin: headers.get("origin"), cookie: headers.get("cookie"), auth: headers.get("authorization") });
+    return new URL(target).pathname.endsWith("/login/start")
+      ? reply({ challenge, codeContent: "synthetic-qr", expiresAt: "2026-09-23T10:00:00Z" })
+      : reply({ status: 1 });
+  };
+  const startRequest = (vercelIp: string) => new Request(url("start"), {
+    method: "POST",
+    headers: { Origin: "https://xc.pithiest.cn", "Content-Type": "application/json", "X-Vercel-Forwarded-For": vercelIp,
+      "X-Forwarded-For": "198.51.100.99", Cookie: `__Secure-pithiest-fenbi=${gzToken}`, Authorization: `Bearer ${gzToken}` },
+    body: "{}",
+  });
+  assert.equal((await handleSsoRequest(startRequest("203.0.113.42"), fetcher)).status, 200);
+  assert.deepEqual(forwarded[0], { path: "/functions/v1/gz-fenbi/login/start", ip: "203.0.113.42", origin: null, cookie: null, auth: null });
+  assert.equal((await handleSsoRequest(startRequest("2001:0db8:0:0:0:0:0:1"), fetcher)).status, 200);
+  assert.equal(forwarded[1].ip, "2001:0db8:0:0:0:0:0:1");
+  for (const invalid of ["203.0.113.256", "203.0.113.42, 198.51.100.1", "1.2.3.4 other", "x".repeat(46)]) {
+    assert.equal((await handleSsoRequest(startRequest(invalid), fetcher)).status, 200);
+    assert.equal(forwarded.at(-1)?.ip, null);
+  }
+  assert.equal((await handleSsoRequest(request("poll", { challenge }), fetcher)).status, 200);
+  assert.equal(forwarded.at(-1)?.ip, null);
+});

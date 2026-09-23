@@ -7,8 +7,8 @@ import { emptyMistakeNotebook, exportMistakeNotebook, mergeMistakeNotebooks, nor
 import type { MistakeNotebook, MistakeQuestion } from "./mistakes";
 import { readNotebook, writeNotebook } from "./mistakeStorage";
 import {
-  disconnectFenbi, fenbiHealth, FENBI_SESSION_KEY, getFenbiAccount, getFenbiNotebook, getFenbiProgress, isFenbiSession, logoutFenbi,
-  mistakeErrorMessage, MistakeApiError, pauseFenbiSession, pollFenbiLogin, readFenbiSession, saveFenbiProgress,
+  disconnectFenbi, fenbiHealth, FENBI_SESSION_KEY, getFenbiAccount, getFenbiNotebook, getFenbiProgress, hasPendingFenbiConflict, isFenbiSession, logoutFenbi,
+  mistakeErrorMessage, MistakeApiError, pauseFenbiSession, pollFenbiLogin, readFenbiSession, readStoredFenbiSession, saveFenbiProgress,
   startFenbiLogin, storeFenbiSession, syncFenbiNow, verifyFenbiDevice,
 } from "./mistakeApi";
 import type { FenbiAccount, FenbiLoginChallenge, FenbiProgress, FenbiSession } from "./mistakeApi";
@@ -97,6 +97,8 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
   },[mode]);
   const [session, setSession] = useState<FenbiSession | null>(readFenbiSession);
   const sessionRef = useRef(session);
+  const pendingPreviousRef = useRef<FenbiSession | null>(hasPendingFenbiConflict() ? readStoredFenbiSession() : null);
+  const [pendingAccount, setPendingAccount] = useState(Boolean(pendingPreviousRef.current));
   const sessionRevision = useRef(0);
   const [message, setMessage] = useState("");
   const [sessionStorageError, setSessionStorageError] = useState("");
@@ -112,6 +114,7 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
   const finishLogin = (next: FenbiSession) => {
     if (!isFenbiSession(next)) { setMessage("本次登录没有完成，请重新扫码。"); return; }
     if (!storeFenbiSession(next)) { const warning="浏览器未能保存登录状态，请检查存储权限后重试；原记录仍保留。";setSessionStorageError(warning);setSharedError(warning);return; }
+    pendingPreviousRef.current = null;setPendingAccount(false);
     setSessionStorageError("");setSharedCandidate(null);setSharedError("");
     ++sessionRevision.current; sessionRef.current = next; setMessage(""); setSession(next);
   };
@@ -120,15 +123,26 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
     sharedCheckBusy.current = true;
     try {
       const result = await getSharedFenbiSession(signal);
-      if (signal?.aborted || logoutInFlight.current || sharedCandidateRef.current || !result) return;
+      if (signal?.aborted || logoutInFlight.current || sharedCandidateRef.current) return;
+      const pending = pendingPreviousRef.current;
+      if (!result) {
+        if (pending) finishLogin(pending);
+        return;
+      }
       setSharedError("");
-      const current = sessionRef.current;
-      if (current?.accountId === result.session.accountId) return;
+      const current = sessionRef.current ?? pending;
+      if (current?.accountId === result.session.accountId) {
+        if (pending) finishLogin(current);
+        return;
+      }
       if (current) {
         const candidate = { ...result, previous: current };
         sharedCandidateRef.current = candidate;setSharedCandidate(candidate);
         suppressNextRestore.current = true;
-        pauseFenbiSession();
+        pendingPreviousRef.current = current;setPendingAccount(true);
+        if (!hasPendingFenbiConflict() && !pauseFenbiSession()) {
+          setSessionStorageError("浏览器无法在刷新后保留账号选择状态，已尝试移除旧登录令牌。原账号记录仍保留，必要时请重新扫码。");
+        }
         sessionRef.current = null;setSession(null);
       }
       else finishLogin(result.session);
@@ -146,7 +160,8 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
     const checkOnReturn = () => { if (!document.hidden) void restoreShared(controller.signal); };
     window.addEventListener("focus", checkOnReturn);
     document.addEventListener("visibilitychange", checkOnReturn);
-    return () => { controller.abort();window.removeEventListener("focus", checkOnReturn);document.removeEventListener("visibilitychange", checkOnReturn); };
+    window.addEventListener("online", checkOnReturn);
+    return () => { controller.abort();window.removeEventListener("focus", checkOnReturn);document.removeEventListener("visibilitychange", checkOnReturn);window.removeEventListener("online", checkOnReturn); };
   }, []);
   useEffect(() => {
     const wasConnected = hadSession.current;
@@ -193,11 +208,11 @@ export function MistakesWorkspace({mode,onSettings}: Presentation) {
   const portal=(content:React.ReactNode)=>target?createPortal(content,target):null;
   const conflictTarget=document.getElementById("shared-identity-slot");
   return <>
-    {conflictTarget && (sharedCandidate || sharedError) && createPortal(<div className="notice-banner is-warning shared-identity-notice" role="alert"><div><strong>{sharedCandidate?"两站当前连接的粉笔账号不同":"共享账号操作未完成"}</strong><span>{sharedCandidate?`行测已暂停原账号读取；公专连接的是「${sharedCandidate.account.displayName||"另一个账号"}」。请选择要在行测使用的账号。${sharedError?` ${sharedError}`:""}`:sharedError}</span></div>{sharedCandidate && <div className="button-row"><button className="primary-btn" onClick={()=>finishLogin(sharedCandidate.session)}>切换到公专账号</button><button className="soft-btn" onClick={()=>finishLogin(sharedCandidate.previous)}>继续原行测账号</button></div>}</div>,conflictTarget)}
+    {conflictTarget && (sharedCandidate || pendingAccount || sharedError) && createPortal(<div className="notice-banner is-warning shared-identity-notice" role="alert"><div><strong>{sharedCandidate?"两站当前连接的粉笔账号不同":pendingAccount?"正在确认两站粉笔账号":"共享账号操作未完成"}</strong><span>{sharedCandidate?`行测已暂停原账号读取；公专连接的是「${sharedCandidate.account.displayName||"另一个账号"}」。请选择要在行测使用的账号。${sharedError?` ${sharedError}`:""}`:pendingAccount?`行测已暂停原账号读取，等待确认公专账号。${sharedError?` ${sharedError}`:"联网后会自动检查。"}你也可以明确选择继续原行测账号。`:sharedError}</span></div>{(sharedCandidate || pendingAccount) && <div className="button-row">{sharedCandidate && <button className="primary-btn" onClick={()=>finishLogin(sharedCandidate.session)}>切换到公专账号</button>}<button className="soft-btn" onClick={()=>{const previous=sharedCandidate?.previous ?? pendingPreviousRef.current;if(previous)finishLogin(previous);}}>继续原行测账号</button></div>}</div>,conflictTarget)}
     {target && sessionStorageError && <div className="mistake-storage-warning" role="alert">{sessionStorageError}</div>}
     {session ? <AccountNotebook key={`${session.accountId}:${session.token}`} session={session} mode={mode} onSettings={onSettings} portal={portal} logoutBusy={logoutBusy}
       onExpired={() => clearSession(session, true)} onLogout={() => void logout(session)} onReconnect={() => clearSession(session, true)} />
-      : sharedCandidate ? portal(<div className="panel mistake-cloud-loading" role="status">请先在页面上方选择要使用的粉笔账号，原账号的读取已暂停。</div>)
+      : sharedCandidate || pendingAccount ? portal(<div className="panel mistake-cloud-loading" role="status">请先在页面上方选择要使用的粉笔账号，原账号的读取已暂停。</div>)
       : <AnonymousNotebook key="anonymous" message={message} onLogin={finishLogin} mode={mode} onSettings={onSettings} portal={portal} />}
   </>;
 }
