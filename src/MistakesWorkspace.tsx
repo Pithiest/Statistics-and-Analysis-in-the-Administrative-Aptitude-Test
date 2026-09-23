@@ -274,11 +274,13 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
   const activeRequest = useRef<AbortController | null>(null);
   const loginCallback = useRef(onLogin);
   loginCallback.current = onLogin;
+  useEffect(() => () => { ++generation.current; activeRequest.current?.abort(); }, []);
   useEffect(() => {
+    if (loginMode !== "legacy") return;
     const request = new AbortController();
     void fenbiHealth(request.signal).catch(() => { if (!request.signal.aborted) setHealthError(true); });
-    return () => { request.abort(); ++generation.current; activeRequest.current?.abort(); };
-  }, []);
+    return () => request.abort();
+  }, [loginMode]);
   const begin = async () => {
     const version = ++generation.current;
     activeRequest.current?.abort();
@@ -286,8 +288,14 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
     setBusy(true); setError(""); setChallenge(null); setQrImage(""); setStatus("idle");
     try {
       const result = await (loginMode==="shared"?startSharedFenbiLogin:startFenbiLogin)(request.signal);
-      if (!result.challenge || typeof result.codeContent !== "string" || !result.codeContent || result.codeContent.length > 20_000) throw new Error("invalid challenge");
-      const image = await QRCode.toDataURL(result.codeContent, { width: 220, margin: 2, errorCorrectionLevel: "M", color: { dark: "#142239", light: "#ffffff" } });
+      if (!result.challenge || typeof result.codeContent !== "string" || !result.codeContent || result.codeContent.length > 20_000)
+        throw new MistakeApiError("登录二维码内容异常，请重新生成或切换行测独立扫码。");
+      let image: string;
+      try {
+        image = await QRCode.toDataURL(result.codeContent, { width: 220, margin: 2, errorCorrectionLevel: "M", color: { dark: "#142239", light: "#ffffff" } });
+      } catch {
+        throw new MistakeApiError("二维码暂时无法显示，请重试或切换行测独立扫码。");
+      }
       if (version !== generation.current || request.signal.aborted) return;
       setChallenge(result); setQrImage(image); setStatus("waiting"); setHealthError(false);
     } catch (failure) {
@@ -338,7 +346,7 @@ function LoginPanel({ onLogin, message }: { onLogin: (session: FenbiSession) => 
   }, [challenge,loginMode]);
   const changeMode = () => {
     activeRequest.current?.abort();++generation.current;
-    setChallenge(null);setQrImage("");setStatus("idle");setError("");setBusy(false);
+    setChallenge(null);setQrImage("");setStatus("idle");setError("");setHealthError(false);setBusy(false);
     setLoginMode(mode=>mode==="shared"?"legacy":"shared");
   };
   return <section className="panel mistake-login-panel">
