@@ -59,6 +59,22 @@ const nav: Array<{ id: ViewId; label: string; icon: ReactNode }> = [
   { id: "settings", label: "设置", icon: <KeyRound /> }
 ];
 
+function viewFromUrl(): ViewId {
+  const selected = new URL(window.location.href).searchParams.get("view");
+  return nav.find((item) => item.id === selected)?.id ?? "today";
+}
+
+function rememberViewInUrl(next: ViewId) {
+  try {
+    const url = new URL(window.location.href);
+    if (next === "today") url.searchParams.delete("view");
+    else url.searchParams.set("view", next);
+    window.history.pushState({ view: next }, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // Navigation remains usable if a browser prevents history updates.
+  }
+}
+
 const OverviewTrendChart = lazy(() => import("./Charts").then((module) => ({ default: module.OverviewTrendChart })));
 const ModuleRadarChart = lazy(() => import("./Charts").then((module) => ({ default: module.ModuleRadarChart })));
 const RecordRoute = lazy(() => import("./Views").then((module) => ({ default: module.RecordView })));
@@ -73,7 +89,7 @@ type CoverageData = ReturnType<typeof dashboard>["coverage"];
 export function App() {
   const [hydrated, setHydrated] = useState(false);
   const [openingView, setOpeningView] = useState<ViewId | null>(null);
-  const [view, setView] = useState<ViewId>("today");
+  const [view, setView] = useState<ViewId>(viewFromUrl);
   const [reviewTab, setReviewTab] = useState<"questions" | "training" | "practice">("training");
   const fenbi=useFenbiPractice();
   const [statsSource,setStatsSource]=useState<"fenbi"|"manual"|null>(null);
@@ -254,6 +270,12 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const restoreView = () => { void navigate(viewFromUrl(), false); };
+    window.addEventListener("popstate", restoreView);
+    return () => window.removeEventListener("popstate", restoreView);
+  }, [view]);
+
   function reportStorage(key: string, success: boolean) {
     const current = storageFailuresRef.current;
     const next = success ? current.filter((item) => item !== key) : current.includes(key) ? current : [...current, key];
@@ -295,7 +317,7 @@ export function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(""), 3600);
   }
 
-  async function navigate(next: ViewId) {
+  async function navigate(next: ViewId, remember = true) {
     const version = ++navigationVersionRef.current;
     transitionRef.current?.skipTransition();
     if (next === view) { setOpeningView(null); return; }
@@ -306,6 +328,7 @@ export function App() {
       const update = () => {
         if (version !== navigationVersionRef.current) return;
         flushSync(() => { setView(next); setOpeningView(null); });
+        if (remember) rememberViewInUrl(next);
         window.scrollTo({ top: 0, behavior: "instant" });
       };
       const doc = document as Document & { startViewTransition?: (callback: () => void) => { skipTransition: () => void } };
